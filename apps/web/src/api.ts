@@ -18,6 +18,8 @@ const MOCK: {
     sqrtPriceX96: '1234567890123456789012345678',
     tick: 195300,
     price: '3421.58',
+    decimals0: 18,
+    decimals1: 6,
   },
   rebalances: [
     {

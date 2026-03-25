@@ -1,4 +1,5 @@
 import { publicClient } from '../config.js'
+import { getTokenDecimals } from './swap.js'
 import type { Position, PoolState } from '@lagrangefi/shared'
 
 // Uniswap v3 NonfungiblePositionManager on Arbitrum
@@ -92,12 +93,16 @@ export async function getPoolStateByPair(
   token1: `0x${string}`,
   fee: number,
 ): Promise<PoolState> {
-  const poolAddress = await publicClient.readContract({
-    address: FACTORY,
-    abi: FACTORY_ABI,
-    functionName: 'getPool',
-    args: [token0, token1, fee],
-  })
+  const [poolAddress, decimals0, decimals1] = await Promise.all([
+    publicClient.readContract({
+      address: FACTORY,
+      abi: FACTORY_ABI,
+      functionName: 'getPool',
+      args: [token0, token1, fee],
+    }),
+    getTokenDecimals(token0),
+    getTokenDecimals(token1),
+  ])
 
   const slot0 = await publicClient.readContract({
     address: poolAddress,
@@ -108,13 +113,15 @@ export async function getPoolStateByPair(
   const sqrtPriceX96 = slot0[0]
   const tick = slot0[1]
 
-  // price = (sqrtPriceX96 / 2^96)^2
-  const price = (Number(sqrtPriceX96) / 2 ** 96) ** 2
+  // price_raw = (sqrtPriceX96 / 2^96)^2  →  human price = price_raw * 10^(decimals0 - decimals1)
+  // e.g. for WETH(18)/USDC(6): price_raw * 10^12 gives USDC per WETH
+  const rawPrice = (Number(sqrtPriceX96) / 2 ** 96) ** 2
+  const price = rawPrice * Math.pow(10, decimals0 - decimals1)
 
   return {
     sqrtPriceX96: sqrtPriceX96.toString(),
     tick,
-    price: price.toFixed(6),
+    price: price.toFixed(2),
   }
 }
 

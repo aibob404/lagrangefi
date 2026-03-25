@@ -23,6 +23,12 @@ function feeLabel(fee: number) {
   return (fee / 10000).toFixed(2) + '%'
 }
 
+// Uniswap v3: price = 1.0001^tick, adjusted for WETH(18) / USDC(6) decimals
+function tickToPrice(tick: number): string {
+  const price = Math.pow(1.0001, tick) * 1e12
+  return '$' + price.toLocaleString('en-US', { maximumFractionDigits: 2 })
+}
+
 function shortHash(hash: string) {
   return hash.slice(0, 8) + '...' + hash.slice(-6)
 }
@@ -42,9 +48,9 @@ function PriceRangeBar({ tick, tickLower, tickUpper }: { tick: number; tickLower
   return (
     <div className="mt-4">
       <div className="flex justify-between text-xs text-slate-400 mb-1">
-        <span>Tick {tickLower}</span>
-        <span>Current: {tick}</span>
-        <span>Tick {tickUpper}</span>
+        <span>{tickToPrice(tickLower)}</span>
+        <span>Current: {tickToPrice(tick)}</span>
+        <span>{tickToPrice(tickUpper)}</span>
       </div>
       <div className="relative h-4 bg-slate-700 rounded-full overflow-visible">
         <div
@@ -494,7 +500,7 @@ export default function App() {
               <Row label="Token ID" value={`#${position.tokenId}`} />
               <Row label="Pair" value={`${tokenLabel(position.token0)} / ${tokenLabel(position.token1)}`} />
               <Row label="Fee Tier" value={feeLabel(position.fee)} />
-              <Row label="Tick Range" value={`${position.tickLower} → ${position.tickUpper}`} />
+              <Row label="Price Range" value={`${tickToPrice(position.tickLower)} → ${tickToPrice(position.tickUpper)}`} />
               <Row label="Liquidity" value={BigInt(position.liquidity) > 0n ? '✓ Active' : '— Empty'} />
             </>
           ) : (
@@ -506,7 +512,7 @@ export default function App() {
           {poolState ? (
             <>
               <Row label="Price (USDC/WETH)" value={`$${Number(poolState.price).toLocaleString('en-US', { maximumFractionDigits: 2 })}`} />
-              <Row label="Current Tick" value={poolState.tick} />
+              <Row label="Current Price (tick)" value={`${tickToPrice(poolState.tick)} (${poolState.tick})`} />
               <Row label="Status" value={inRange !== null ? <StatusBadge inRange={inRange} /> : '—'} />
             </>
           ) : (

@@ -11,6 +11,7 @@ version = "0.1.0"
 
 repositories {
     mavenCentral()
+    maven { url = uri("https://jitpack.io") }
 }
 
 val ktorVersion = "2.3.12"

@@ -138,15 +138,11 @@ export async function mintPosition(req: MintRequest): Promise<MintResult> {
     publicClient.readContract({ address: TOKEN1, abi: ERC20_ABI, functionName: 'balanceOf', args: [account.address] }),
   ])
 
-  // 7. Approve position manager for both tokens
-  const [approveTx0, approveTx1] = await Promise.all([
-    walletClient.writeContract({ address: TOKEN0, abi: ERC20_ABI, functionName: 'approve', args: [POSITION_MANAGER, finalBalance0] }),
-    walletClient.writeContract({ address: TOKEN1, abi: ERC20_ABI, functionName: 'approve', args: [POSITION_MANAGER, finalBalance1] }),
-  ])
-  await Promise.all([
-    publicClient.waitForTransactionReceipt({ hash: approveTx0 }),
-    publicClient.waitForTransactionReceipt({ hash: approveTx1 }),
-  ])
+  // 7. Approve position manager for both tokens — sequential to avoid nonce collision
+  const approveTx0 = await walletClient.writeContract({ address: TOKEN0, abi: ERC20_ABI, functionName: 'approve', args: [POSITION_MANAGER, finalBalance0] })
+  await publicClient.waitForTransactionReceipt({ hash: approveTx0 })
+  const approveTx1 = await walletClient.writeContract({ address: TOKEN1, abi: ERC20_ABI, functionName: 'approve', args: [POSITION_MANAGER, finalBalance1] })
+  await publicClient.waitForTransactionReceipt({ hash: approveTx1 })
   txHashes.push(approveTx0, approveTx1)
 
   // 8. Mint new LP position

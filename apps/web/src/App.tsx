@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Position, PoolState, RebalanceEvent, StartStrategyRequest, StartStrategyResult } from './types'
-import { fetchPosition, fetchPoolState, fetchRebalances, startStrategy } from './api'
+import { fetchPosition, fetchPoolState, fetchRebalances, startStrategy, closePosition } from './api'
 
 const TOKEN_LABELS: Record<string, string> = {
   '0x82af49447d8a07e3bd95bd0d56f35241523fbab1': 'WETH',
@@ -427,24 +427,57 @@ export default function App() {
   const [poolState, setPoolState] = useState<PoolState | null>(null)
   const [rebalances, setRebalances] = useState<RebalanceEvent[]>([])
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [positionError, setPositionError] = useState<string | null>(null)
+  const [poolStateError, setPoolStateError] = useState<string | null>(null)
   const [showModal, setShowModal] = useState(false)
+  const [positionLoaded, setPositionLoaded] = useState(false)
+  const [closeState, setCloseState] = useState<'idle' | 'confirm' | 'closing' | 'done' | 'error'>('idle')
+  const [closeError, setCloseError] = useState<string | null>(null)
+
+  async function handleClose() {
+    setCloseState('closing')
+    setCloseError(null)
+    try {
+      const result = await closePosition()
+      if (result.success) {
+        setCloseState('done')
+        setPosition(null)
+        await fetchAll()
+      } else {
+        setCloseError(result.error ?? 'Close failed')
+        setCloseState('error')
+      }
+    } catch {
+      setCloseError('Request failed')
+      setCloseState('error')
+    }
+  }
 
   async function fetchAll() {
-    try {
-      const [pos, pool, rebal] = await Promise.all([
-        fetchPosition(),
-        fetchPoolState(),
-        fetchRebalances(),
-      ])
-      setPosition(pos)
-      setPoolState(pool)
-      setRebalances(rebal)
-      setLastUpdated(new Date())
-      setError(null)
-    } catch {
-      setError('Failed to fetch data from API')
+    const [pos, pool, rebal] = await Promise.allSettled([
+      fetchPosition(),
+      fetchPoolState(),
+      fetchRebalances(),
+    ])
+
+    if (pos.status === 'fulfilled') {
+      setPosition(pos.value)
+      setPositionError(null)
+    } else {
+      setPositionError('Could not load position data')
     }
+
+    if (pool.status === 'fulfilled') {
+      setPoolState(pool.value)
+      setPoolStateError(null)
+    } else {
+      setPoolStateError('Could not load pool data')
+    }
+
+    if (rebal.status === 'fulfilled') setRebalances(rebal.value)
+
+    setLastUpdated(new Date())
+    setPositionLoaded(true)
   }
 
   useEffect(() => {
@@ -474,7 +507,41 @@ export default function App() {
               </p>
             )}
           </div>
-          {(!position || BigInt(position.liquidity) === 0n) && (
+          {positionLoaded && position && BigInt(position.liquidity) > 0n && (
+            closeState === 'confirm' ? (
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-slate-300">Close position?</span>
+                <button
+                  onClick={handleClose}
+                  className="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white text-sm font-semibold rounded-xl transition-colors"
+                >
+                  Confirm
+                </button>
+                <button
+                  onClick={() => setCloseState('idle')}
+                  className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white text-sm font-semibold rounded-xl transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : closeState === 'closing' ? (
+              <button disabled className="flex items-center gap-2 px-4 py-2 bg-red-800 text-red-300 text-sm font-semibold rounded-xl cursor-not-allowed">
+                <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                </svg>
+                Closing...
+              </button>
+            ) : (
+              <button
+                onClick={() => setCloseState('confirm')}
+                className="flex items-center gap-2 px-4 py-2 bg-red-700 hover:bg-red-600 text-white text-sm font-semibold rounded-xl transition-colors"
+              >
+                Close Position
+              </button>
+            )
+          )}
+          {positionLoaded && (!position || BigInt(position.liquidity) === 0n) && (
             <button
               onClick={() => setShowModal(true)}
               className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-xl transition-colors"
@@ -485,19 +552,27 @@ export default function App() {
               Start Strategy
             </button>
           )}
+          {closeState === 'error' && closeError && (
+            <span className="text-xs text-red-400">{closeError}</span>
+          )}
         </div>
       </div>
 
-      {error && (
-        <div className="mb-6 bg-red-500/10 border border-red-500/30 text-red-400 text-sm rounded-lg px-4 py-3">
-          {error}
+      {positionLoaded && positionError && poolStateError && (
+        <div className="mb-6 bg-red-500/10 border border-red-500/30 text-red-400 text-sm rounded-lg px-4 py-3 flex items-center justify-between">
+          <span>API is unreachable — data may be stale</span>
+          <button onClick={fetchAll} className="ml-4 underline hover:text-red-300">Retry</button>
         </div>
       )}
 
       {/* Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
         <Card title="Position">
-          {position ? (
+          {!positionLoaded ? (
+            <p className="text-slate-500 text-sm animate-pulse">Loading...</p>
+          ) : positionError ? (
+            <p className="text-red-400 text-sm">{positionError}</p>
+          ) : position ? (
             <>
               <Row label="Token ID" value={`#${position.tokenId}`} />
               <Row label="Pair" value={`${tokenLabel(position.token0)} / ${tokenLabel(position.token1)}`} />
@@ -506,12 +581,16 @@ export default function App() {
               <Row label="Liquidity" value={BigInt(position.liquidity) > 0n ? '✓ Active' : '— Empty'} />
             </>
           ) : (
-            <p className="text-slate-500 text-sm">Loading...</p>
+            <p className="text-slate-500 text-sm">No active position</p>
           )}
         </Card>
 
         <Card title="Pool State">
-          {poolState ? (
+          {!positionLoaded ? (
+            <p className="text-slate-500 text-sm animate-pulse">Loading...</p>
+          ) : poolStateError ? (
+            <p className="text-red-400 text-sm">{poolStateError}</p>
+          ) : poolState ? (
             <>
               <Row label="Price (USDC/WETH)" value={`$${Number(poolState.price).toLocaleString('en-US', { maximumFractionDigits: 2 })}`} />
               <Row label="Current Price (tick)" value={`${tickToPrice(poolState.tick, poolState.decimals0, poolState.decimals1)} (${poolState.tick})`} />

@@ -1,4 +1,4 @@
-import type { Position, PoolState, RebalanceEvent, StartStrategyRequest, StartStrategyResult } from './types'
+import type { Position, PoolState, RebalanceEvent, StartStrategyRequest, StartStrategyResult, CloseResult } from './types'
 
 const MOCK: {
   position: Position
@@ -68,19 +68,26 @@ async function mockFetch<T>(data: T): Promise<T> {
   return data
 }
 
-export async function fetchPosition(): Promise<Position> {
+export async function fetchPosition(): Promise<Position | null> {
   if (USE_MOCK) return mockFetch(MOCK.position)
-  return fetch('/api/v1/position').then(r => r.json())
+  const resp = await fetch('/api/v1/position')
+  if (resp.status === 204) return null
+  if (!resp.ok) throw new Error(`position ${resp.status}`)
+  return resp.json()
 }
 
-export async function fetchPoolState(): Promise<PoolState> {
+export async function fetchPoolState(): Promise<PoolState | null> {
   if (USE_MOCK) return mockFetch(MOCK.poolState)
-  return fetch('/api/v1/pool-state').then(r => r.json())
+  const resp = await fetch('/api/v1/pool-state')
+  if (!resp.ok) throw new Error(`pool-state ${resp.status}`)
+  return resp.json()
 }
 
 export async function fetchRebalances(): Promise<RebalanceEvent[]> {
   if (USE_MOCK) return mockFetch(MOCK.rebalances)
-  return fetch('/api/v1/rebalances').then(r => r.json())
+  const resp = await fetch('/api/v1/rebalances')
+  if (!resp.ok) throw new Error(`rebalances ${resp.status}`)
+  return resp.json()
 }
 
 export async function startStrategy(
@@ -113,5 +120,14 @@ export async function startStrategy(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(req),
   })
+  return resp.json()
+}
+
+export async function closePosition(): Promise<CloseResult> {
+  if (USE_MOCK) {
+    await new Promise(r => setTimeout(r, 2000))
+    return { success: true, txHashes: ['0xmock000close111tx222hash333abc444def555aaa666bbb777ccc888ddd999'] }
+  }
+  const resp = await fetch('/api/v1/strategy/close', { method: 'POST' })
   return resp.json()
 }

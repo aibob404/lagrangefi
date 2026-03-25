@@ -50,6 +50,17 @@ export interface MintResult {
   error?: string
 }
 
+export interface CloseRequest {
+  idempotencyKey: string
+  tokenId: string
+}
+
+export interface CloseResult {
+  success: boolean
+  txHashes: string[]
+  error?: string
+}
+
 export interface ExecuteStep {
   type: 'remove_liquidity' | 'collect_fees' | 'swap' | 'add_liquidity'
   params: Record<string, unknown>

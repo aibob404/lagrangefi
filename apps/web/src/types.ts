@@ -42,3 +42,9 @@ export interface StartStrategyResult {
   txHashes?: string[]
   error?: string
 }
+
+export interface CloseResult {
+  success: boolean
+  txHashes?: string[]
+  error?: string
+}

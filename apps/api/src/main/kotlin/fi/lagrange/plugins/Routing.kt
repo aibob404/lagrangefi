@@ -4,6 +4,7 @@ import fi.lagrange.config.AppConfig
 import fi.lagrange.model.RebalanceEvents
 import fi.lagrange.services.ChainClient
 import fi.lagrange.services.MintRequest
+import java.util.UUID
 import fi.lagrange.strategy.UniswapStrategy
 import io.ktor.http.*
 import io.ktor.server.application.*
@@ -60,8 +61,13 @@ fun Application.configureRouting(chainClient: ChainClient, config: AppConfig, st
             }
 
             get("/position") {
+                val tokenId = strategy.currentTokenId
+                if (tokenId.isBlank()) {
+                    call.respond(HttpStatusCode.NoContent)
+                    return@get
+                }
                 try {
-                    val position = chainClient.getPosition(strategy.currentTokenId)
+                    val position = chainClient.getPosition(tokenId)
                     call.respond(position)
                 } catch (e: Exception) {
                     call.respond(HttpStatusCode.ServiceUnavailable, mapOf("error" to (e.message ?: "chain service unavailable")))
@@ -70,7 +76,12 @@ fun Application.configureRouting(chainClient: ChainClient, config: AppConfig, st
 
             get("/pool-state") {
                 try {
-                    val poolState = chainClient.getPoolState(strategy.currentTokenId)
+                    val tokenId = strategy.currentTokenId
+                    val poolState = if (tokenId.isBlank()) {
+                        chainClient.getPoolByPair(WETH, USDC, 500)
+                    } else {
+                        chainClient.getPoolState(tokenId)
+                    }
                     call.respond(poolState)
                 } catch (e: Exception) {
                     call.respond(HttpStatusCode.ServiceUnavailable, mapOf("error" to (e.message ?: "chain service unavailable")))
@@ -129,6 +140,26 @@ fun Application.configureRouting(chainClient: ChainClient, config: AppConfig, st
                 }
                 strategy.updateTokenId(tokenId)
                 call.respond(mapOf("tokenId" to tokenId))
+            }
+
+            post("/strategy/close") {
+                val tokenId = strategy.currentTokenId
+                if (tokenId.isBlank()) {
+                    call.respond(HttpStatusCode.BadRequest, mapOf("error" to "No active position to close"))
+                    return@post
+                }
+                try {
+                    val idempotencyKey = UUID.randomUUID().toString()
+                    val result = chainClient.close(idempotencyKey, tokenId)
+                    if (result.success) {
+                        strategy.clearTokenId()
+                        call.respond(mapOf("success" to true, "txHashes" to result.txHashes))
+                    } else {
+                        call.respond(HttpStatusCode.UnprocessableEntity, mapOf("success" to false, "error" to (result.error ?: "Close failed")))
+                    }
+                } catch (e: Exception) {
+                    call.respond(HttpStatusCode.InternalServerError, mapOf("success" to false, "error" to (e.message ?: "Unknown error")))
+                }
             }
 
             get("/rebalances") {

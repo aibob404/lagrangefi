@@ -45,6 +45,18 @@ class UniswapStrategy(
 
     val currentTokenId: String get() = activeTokenId
 
+    fun clearTokenId() {
+        activeTokenId = ""
+        transaction {
+            StrategyState.upsert {
+                it[key] = ACTIVE_TOKEN_ID_KEY
+                it[value] = ""
+            }
+        }
+        log.info("Active position cleared (position closed)")
+        telegram.sendAlert("Position closed. Strategy idle — no active position.")
+    }
+
     fun updateTokenId(newTokenId: String) {
         activeTokenId = newTokenId
         transaction {
@@ -81,6 +93,10 @@ class UniswapStrategy(
 
     override suspend fun execute() {
         val tokenId = activeTokenId
+        if (tokenId.isBlank()) {
+            log.debug("No active position, skipping rebalance check")
+            return
+        }
         log.debug("Checking position tokenId=$tokenId")
 
         val position = chainClient.getPosition(tokenId)

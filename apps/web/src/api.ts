@@ -1,4 +1,4 @@
-import type { Position, PoolState, RebalanceEvent } from './types'
+import type { Position, PoolState, RebalanceEvent, StartStrategyRequest, StartStrategyResult } from './types'
 
 const MOCK: {
   position: Position
@@ -79,4 +79,37 @@ export async function fetchPoolState(): Promise<PoolState> {
 export async function fetchRebalances(): Promise<RebalanceEvent[]> {
   if (USE_MOCK) return mockFetch(MOCK.rebalances)
   return fetch('/api/v1/rebalances').then(r => r.json())
+}
+
+export async function startStrategy(
+  req: StartStrategyRequest,
+  onStep: (step: string) => void,
+): Promise<StartStrategyResult> {
+  if (USE_MOCK) {
+    const steps = [
+      ['Wrapping ETH → WETH', 1200],
+      ['Calculating optimal swap', 600],
+      ['Executing token swap', 1800],
+      ['Minting LP position', 1400],
+    ] as [string, number][]
+    for (const [label, ms] of steps) {
+      onStep(label)
+      await new Promise(r => setTimeout(r, ms))
+    }
+    return {
+      success: true,
+      tokenId: '12346',
+      txHashes: [
+        '0xaaa111bbb222ccc333ddd444eee555fff666aaa111bbb222ccc333ddd444eee5',
+        '0xbbb222ccc333ddd444eee555fff666aaa111bbb222ccc333ddd444eee555fff6',
+        '0xccc333ddd444eee555fff666aaa111bbb222ccc333ddd444eee555fff666aaa1',
+      ],
+    }
+  }
+  const resp = await fetch('/api/v1/strategy/start', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  })
+  return resp.json()
 }

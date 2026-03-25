@@ -36,6 +36,24 @@ data class RebalanceResponse(
     val error: String? = null,
 )
 
+@Serializable
+data class MintRequest(
+    val ethAmount: String,
+    val usdcAmount: String,
+    val feeTier: Int,
+    val tickLower: Int,
+    val tickUpper: Int,
+    val slippageTolerance: Double,
+)
+
+@Serializable
+data class MintResponse(
+    val success: Boolean,
+    val tokenId: String? = null,
+    val txHashes: List<String>,
+    val error: String? = null,
+)
+
 class ChainClient(private val baseUrl: String) {
     private val http = HttpClient(CIO) {
         install(ContentNegotiation) { json() }
@@ -46,6 +64,19 @@ class ChainClient(private val baseUrl: String) {
 
     suspend fun getPoolState(tokenId: String): PoolStateResponse =
         http.get("$baseUrl/positions/$tokenId/pool-state").body()
+
+    suspend fun getPoolByPair(token0: String, token1: String, fee: Int): PoolStateResponse =
+        http.get("$baseUrl/pool") {
+            parameter("token0", token0)
+            parameter("token1", token1)
+            parameter("fee", fee)
+        }.body()
+
+    suspend fun mint(req: MintRequest): MintResponse =
+        http.post("$baseUrl/mint") {
+            contentType(ContentType.Application.Json)
+            setBody(req)
+        }.body()
 
     suspend fun rebalance(
         idempotencyKey: String,

@@ -32,6 +32,22 @@ export interface RebalanceResult {
   error?: string
 }
 
+export interface MintRequest {
+  ethAmount: string      // human-readable ETH to wrap → WETH, e.g. "0.05"
+  usdcAmount: string     // human-readable USDC to deposit, e.g. "200"
+  feeTier: number        // 100 | 500 | 3000 | 10000
+  tickLower: number
+  tickUpper: number
+  slippageTolerance: number
+}
+
+export interface MintResult {
+  success: boolean
+  tokenId?: string
+  txHashes: string[]
+  error?: string
+}
+
 export interface ExecuteStep {
   type: 'remove_liquidity' | 'collect_fees' | 'swap' | 'add_liquidity'
   params: Record<string, unknown>

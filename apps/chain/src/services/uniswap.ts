@@ -84,12 +84,19 @@ export async function getPosition(tokenId: bigint): Promise<Position> {
 
 export async function getPoolState(tokenId: bigint): Promise<PoolState> {
   const position = await getPosition(tokenId)
+  return getPoolStateByPair(position.token0 as `0x${string}`, position.token1 as `0x${string}`, position.fee)
+}
 
+export async function getPoolStateByPair(
+  token0: `0x${string}`,
+  token1: `0x${string}`,
+  fee: number,
+): Promise<PoolState> {
   const poolAddress = await publicClient.readContract({
     address: FACTORY,
     abi: FACTORY_ABI,
     functionName: 'getPool',
-    args: [position.token0 as `0x${string}`, position.token1 as `0x${string}`, position.fee],
+    args: [token0, token1, fee],
   })
 
   const slot0 = await publicClient.readContract({

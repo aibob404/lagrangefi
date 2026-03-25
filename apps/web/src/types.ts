@@ -26,3 +26,17 @@ export interface RebalanceEvent {
   triggeredAt: string
   completedAt: string | null
 }
+
+export interface StartStrategyRequest {
+  ethAmount: string
+  usdcAmount: string
+  feeTier: number
+  rangePercent: number
+}
+
+export interface StartStrategyResult {
+  success: boolean
+  tokenId?: string
+  txHashes?: string[]
+  error?: string
+}

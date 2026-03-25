@@ -19,6 +19,20 @@ class UniswapStrategy(
     private val log = LoggerFactory.getLogger(UniswapStrategy::class.java)
     private var timer: Timer? = null
 
+    @Volatile
+    private var activeTokenId: String = config.rebalancer.positionTokenId
+
+    val currentTokenId: String get() = activeTokenId
+
+    fun updateTokenId(newTokenId: String) {
+        activeTokenId = newTokenId
+        log.info("Active position updated to tokenId=$newTokenId")
+        telegram.sendAlert("Strategy active: new position tokenId=$newTokenId")
+    }
+
+    fun calculateRange(currentTick: Int, fee: Int, rangePercent: Double): Pair<Int, Int> =
+        calculateNewRange(currentTick, fee, rangePercent)
+
     override fun startScheduler() {
         val intervalMs = config.rebalancer.pollIntervalSeconds * 1000
         timer = fixedRateTimer("rebalancer", daemon = true, period = intervalMs) {
@@ -39,7 +53,7 @@ class UniswapStrategy(
     }
 
     override suspend fun execute() {
-        val tokenId = config.rebalancer.positionTokenId
+        val tokenId = activeTokenId
         log.debug("Checking position tokenId=$tokenId")
 
         val position = chainClient.getPosition(tokenId)
@@ -56,7 +70,7 @@ class UniswapStrategy(
         log.info("Position OUT OF RANGE — tick=$currentTick, range=[${position.tickLower}, ${position.tickUpper}]. Triggering rebalance.")
         telegram.sendAlert("Position out of range! tick=$currentTick range=[${position.tickLower}, ${position.tickUpper}]. Rebalancing...")
 
-        val (newTickLower, newTickUpper) = calculateNewRange(poolState.tick, position.fee)
+        val (newTickLower, newTickUpper) = calculateNewRange(poolState.tick, position.fee, config.rebalancer.rangePercent)
 
         val idempotencyKey = UUID.randomUUID().toString()
         val result = chainClient.rebalance(
@@ -71,10 +85,8 @@ class UniswapStrategy(
             log.info("Rebalance succeeded. New tokenId=${result.newTokenId}, txs=${result.txHashes}")
             telegram.sendAlert("Rebalance successful! New position tokenId=${result.newTokenId}")
 
-            // Update tracked tokenId in DB to the new position
-            result.newTokenId?.let { newId ->
-                // TODO: persist updated tokenId
-            }
+            // Update tracked tokenId to the new position
+            result.newTokenId?.let { newId -> updateTokenId(newId) }
         } else {
             log.error("Rebalance failed: ${result.error}")
             telegram.sendAlert("Rebalance FAILED: ${result.error}")
@@ -83,9 +95,8 @@ class UniswapStrategy(
 
     // Calculate new tick range centered on current price with +/- rangePercent
     // Uses the relationship: price = 1.0001^tick
-    private fun calculateNewRange(currentTick: Int, fee: Int): Pair<Int, Int> {
+    private fun calculateNewRange(currentTick: Int, fee: Int, rangePercent: Double): Pair<Int, Int> {
         val tickSpacing = feeToTickSpacing(fee)
-        val rangePercent = config.rebalancer.rangePercent
 
         // Convert percent to tick delta: tickDelta = log(1 + rangePercent) / log(1.0001)
         val tickDelta = (Math.log(1.0 + rangePercent) / Math.log(1.0001)).toInt()

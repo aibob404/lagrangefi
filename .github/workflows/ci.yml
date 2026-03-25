@@ -10,14 +10,11 @@ env:
   OWNER: aibob404
 
 jobs:
-  build:
+  build-chain:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-    strategy:
-      matrix:
-        service: [api, chain, web]
     steps:
       - uses: actions/checkout@v4
 
@@ -36,17 +33,83 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build and push ${{ matrix.service }}
+      # Context must be repo root so Dockerfile can access packages/shared
+      - name: Build and push chain
         uses: docker/build-push-action@v5
         with:
-          context: apps/${{ matrix.service }}
+          context: .
+          file: apps/chain/Dockerfile
           push: ${{ github.event_name == 'push' }}
-          tags: ghcr.io/${{ env.OWNER }}/lagrangefi-${{ matrix.service }}:sha-${{ steps.sha.outputs.short }}
-          cache-from: type=gha,scope=${{ matrix.service }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+          tags: ghcr.io/${{ env.OWNER }}/lagrangefi-chain:sha-${{ steps.sha.outputs.short }}
+          cache-from: type=gha,scope=chain
+          cache-to: type=gha,mode=max,scope=chain
+
+  build-api:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set short SHA
+        id: sha
+        run: echo "short=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+
+      - name: Log in to GHCR
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push api
+        uses: docker/build-push-action@v5
+        with:
+          context: apps/api
+          push: ${{ github.event_name == 'push' }}
+          tags: ghcr.io/${{ env.OWNER }}/lagrangefi-api:sha-${{ steps.sha.outputs.short }}
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
+
+  build-web:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set short SHA
+        id: sha
+        run: echo "short=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+
+      - name: Log in to GHCR
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push web
+        uses: docker/build-push-action@v5
+        with:
+          context: apps/web
+          push: ${{ github.event_name == 'push' }}
+          tags: ghcr.io/${{ env.OWNER }}/lagrangefi-web:sha-${{ steps.sha.outputs.short }}
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,mode=max,scope=web
 
   update-manifests:
-    needs: build
+    needs: [build-chain, build-api, build-web]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:

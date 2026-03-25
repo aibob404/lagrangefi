@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import type { Position, PoolState, RebalanceEvent, StartStrategyRequest, StartStrategyResult } from './types'
-import { fetchPosition, fetchPoolState, fetchRebalances, startStrategy, closePosition } from './api'
+import type { Position, PoolState, RebalanceEvent, StartStrategyRequest, StartStrategyResult, WalletBalances } from './types'
+import { fetchPosition, fetchPoolState, fetchRebalances, startStrategy, closePosition, fetchWalletBalances } from './api'
 
 const TOKEN_LABELS: Record<string, string> = {
   '0x82af49447d8a07e3bd95bd0d56f35241523fbab1': 'WETH',
@@ -426,6 +426,7 @@ export default function App() {
   const [position, setPosition] = useState<Position | null>(null)
   const [poolState, setPoolState] = useState<PoolState | null>(null)
   const [rebalances, setRebalances] = useState<RebalanceEvent[]>([])
+  const [walletBalances, setWalletBalances] = useState<WalletBalances | null>(null)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const [positionError, setPositionError] = useState<string | null>(null)
   const [poolStateError, setPoolStateError] = useState<string | null>(null)
@@ -454,10 +455,11 @@ export default function App() {
   }
 
   async function fetchAll() {
-    const [pos, pool, rebal] = await Promise.allSettled([
+    const [pos, pool, rebal, wallet] = await Promise.allSettled([
       fetchPosition(),
       fetchPoolState(),
       fetchRebalances(),
+      fetchWalletBalances(),
     ])
 
     if (pos.status === 'fulfilled') {
@@ -475,6 +477,7 @@ export default function App() {
     }
 
     if (rebal.status === 'fulfilled') setRebalances(rebal.value)
+    if (wallet.status === 'fulfilled') setWalletBalances(wallet.value)
 
     setLastUpdated(new Date())
     setPositionLoaded(true)
@@ -562,6 +565,22 @@ export default function App() {
         <div className="mb-6 bg-red-500/10 border border-red-500/30 text-red-400 text-sm rounded-lg px-4 py-3 flex items-center justify-between">
           <span>API is unreachable — data may be stale</span>
           <button onClick={fetchAll} className="ml-4 underline hover:text-red-300">Retry</button>
+        </div>
+      )}
+
+      {/* Wallet Balances */}
+      {walletBalances && (
+        <div className="mb-4 bg-slate-800/50 border border-slate-700/50 rounded-xl px-5 py-3 flex items-center gap-6">
+          <span className="text-xs font-semibold uppercase tracking-widest text-slate-400">Wallet</span>
+          <div className="flex items-center gap-1.5">
+            <span className="text-sm text-slate-400">ETH</span>
+            <span className="text-sm font-mono text-white">{Number(walletBalances.eth).toFixed(4)}</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="text-sm text-slate-400">USDC</span>
+            <span className="text-sm font-mono text-white">{Number(walletBalances.usdc).toLocaleString('en-US', { maximumFractionDigits: 2 })}</span>
+          </div>
+          <span className="text-xs text-slate-600 font-mono ml-auto">{walletBalances.address.slice(0, 6)}…{walletBalances.address.slice(-4)}</span>
         </div>
       )}
 

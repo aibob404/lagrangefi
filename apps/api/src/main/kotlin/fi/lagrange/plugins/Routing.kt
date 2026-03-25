@@ -162,6 +162,15 @@ fun Application.configureRouting(chainClient: ChainClient, config: AppConfig, st
                 }
             }
 
+            get("/wallet/balances") {
+                try {
+                    val balances = chainClient.getWalletBalances()
+                    call.respond(balances)
+                } catch (e: Exception) {
+                    call.respond(HttpStatusCode.ServiceUnavailable, mapOf("error" to (e.message ?: "chain service unavailable")))
+                }
+            }
+
             get("/rebalances") {
                 val events = transaction {
                     RebalanceEvents.selectAll()

@@ -120,6 +120,17 @@ fun Application.configureRouting(chainClient: ChainClient, config: AppConfig, st
                 }
             }
 
+            put("/strategy/token-id") {
+                val body = call.receive<Map<String, String>>()
+                val tokenId = body["tokenId"]
+                if (tokenId.isNullOrBlank()) {
+                    call.respond(HttpStatusCode.BadRequest, mapOf("error" to "tokenId is required"))
+                    return@put
+                }
+                strategy.updateTokenId(tokenId)
+                call.respond(mapOf("tokenId" to tokenId))
+            }
+
             get("/rebalances") {
                 val events = transaction {
                     RebalanceEvents.selectAll()

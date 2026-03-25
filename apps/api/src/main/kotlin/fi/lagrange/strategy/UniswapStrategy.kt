@@ -1,9 +1,13 @@
 package fi.lagrange.strategy
 
 import fi.lagrange.config.AppConfig
+import fi.lagrange.model.StrategyState
 import fi.lagrange.services.ChainClient
 import fi.lagrange.services.TelegramNotifier
 import kotlinx.coroutines.runBlocking
+import org.jetbrains.exposed.sql.selectAll
+import org.jetbrains.exposed.sql.transactions.transaction
+import org.jetbrains.exposed.sql.upsert
 import org.slf4j.LoggerFactory
 import java.util.Timer
 import java.util.UUID
@@ -16,16 +20,39 @@ class UniswapStrategy(
     private val config: AppConfig,
 ) : ProtocolStrategy {
 
+    companion object {
+        private const val ACTIVE_TOKEN_ID_KEY = "active_token_id"
+    }
+
     private val log = LoggerFactory.getLogger(UniswapStrategy::class.java)
     private var timer: Timer? = null
 
     @Volatile
     private var activeTokenId: String = config.rebalancer.positionTokenId
 
+    init {
+        val persisted = transaction {
+            StrategyState.selectAll()
+                .where { StrategyState.key eq ACTIVE_TOKEN_ID_KEY }
+                .singleOrNull()
+                ?.get(StrategyState.value)
+        }
+        if (persisted != null) {
+            activeTokenId = persisted
+            log.info("Loaded activeTokenId=$persisted from DB")
+        }
+    }
+
     val currentTokenId: String get() = activeTokenId
 
     fun updateTokenId(newTokenId: String) {
         activeTokenId = newTokenId
+        transaction {
+            StrategyState.upsert {
+                it[key] = ACTIVE_TOKEN_ID_KEY
+                it[value] = newTokenId
+            }
+        }
         log.info("Active position updated to tokenId=$newTokenId")
         telegram.sendAlert("Strategy active: new position tokenId=$newTokenId")
     }

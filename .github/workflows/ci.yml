@@ -3,8 +3,7 @@ name: Build and Push Images
 on:
   push:
     branches: [main]
-  pull_request:
-    branches: [main]
+  workflow_dispatch: # manual build for feature branches
 
 env:
   OWNER: aibob404
@@ -13,13 +12,17 @@ jobs:
   changes:
     runs-on: ubuntu-latest
     outputs:
-      chain: ${{ steps.filter.outputs.chain }}
-      api: ${{ steps.filter.outputs.api }}
-      web: ${{ steps.filter.outputs.web }}
+      chain: ${{ steps.result.outputs.chain }}
+      api: ${{ steps.result.outputs.api }}
+      web: ${{ steps.result.outputs.web }}
     steps:
       - uses: actions/checkout@v4
+
+      # Path filtering only makes sense on push (has a before/after diff).
+      # Manual builds always build all services.
       - uses: dorny/paths-filter@v3
         id: filter
+        if: github.event_name == 'push'
         with:
           filters: |
             chain:
@@ -29,6 +32,19 @@ jobs:
               - 'apps/api/**'
             web:
               - 'apps/web/**'
+
+      - name: Set outputs
+        id: result
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "chain=true" >> $GITHUB_OUTPUT
+            echo "api=true"   >> $GITHUB_OUTPUT
+            echo "web=true"   >> $GITHUB_OUTPUT
+          else
+            echo "chain=${{ steps.filter.outputs.chain }}" >> $GITHUB_OUTPUT
+            echo "api=${{ steps.filter.outputs.api }}"     >> $GITHUB_OUTPUT
+            echo "web=${{ steps.filter.outputs.web }}"     >> $GITHUB_OUTPUT
+          fi
 
   build-chain:
     needs: changes
@@ -45,7 +61,6 @@ jobs:
         run: echo "short=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
 
       - name: Log in to GHCR
-        if: github.event_name == 'push'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -60,7 +75,7 @@ jobs:
         with:
           context: .
           file: apps/chain/Dockerfile
-          push: ${{ github.event_name == 'push' }}
+          push: true
           tags: ghcr.io/${{ env.OWNER }}/lagrangefi-chain:sha-${{ steps.sha.outputs.short }}
           cache-from: type=gha,scope=chain
           cache-to: type=gha,mode=max,scope=chain
@@ -80,7 +95,6 @@ jobs:
         run: echo "short=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
 
       - name: Log in to GHCR
-        if: github.event_name == 'push'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -94,7 +108,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: apps/api
-          push: ${{ github.event_name == 'push' }}
+          push: true
           tags: ghcr.io/${{ env.OWNER }}/lagrangefi-api:sha-${{ steps.sha.outputs.short }}
           cache-from: type=gha,scope=api
           cache-to: type=gha,mode=max,scope=api
@@ -114,7 +128,6 @@ jobs:
         run: echo "short=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
 
       - name: Log in to GHCR
-        if: github.event_name == 'push'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -128,14 +141,14 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: apps/web
-          push: ${{ github.event_name == 'push' }}
+          push: true
           tags: ghcr.io/${{ env.OWNER }}/lagrangefi-web:sha-${{ steps.sha.outputs.short }}
           cache-from: type=gha,scope=web
           cache-to: type=gha,mode=max,scope=web
 
   update-manifests:
     needs: [build-chain, build-api, build-web]
-    # Run if push to main and at least one image was successfully built
+    # Only update kustomization.yaml on push to main, not on manual builds
     if: |
       always() &&
       github.event_name == 'push' &&

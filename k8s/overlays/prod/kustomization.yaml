@@ -10,6 +10,19 @@ patches:
   - path: web-replicas.yaml
   - path: ingress-host.yaml
 
+# Image tags for prod must be pinned manually to a specific SHA before deploying.
+# Update the newTag values below, then: kubectl apply -k k8s/overlays/prod
+images:
+  - name: lagrangefi/api
+    newName: ghcr.io/aibob404/lagrangefi-api
+    newTag: sha-placeholder
+  - name: lagrangefi/chain
+    newName: ghcr.io/aibob404/lagrangefi-chain
+    newTag: sha-placeholder
+  - name: lagrangefi/web
+    newName: ghcr.io/aibob404/lagrangefi-web
+    newTag: sha-placeholder
+
 # Secrets must be created manually in the cluster:
 #   kubectl create secret generic postgres-secret -n prod \
 #     --from-literal=user=lagrangefi --from-literal=password=<password>

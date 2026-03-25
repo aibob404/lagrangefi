@@ -111,7 +111,7 @@ const EXECUTION_STEPS = [
   'Minting LP position',
 ]
 
-function StartStrategyModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: () => void }) {
+function StartStrategyModal({ onClose, onSuccess, walletBalances }: { onClose: () => void; onSuccess: () => void; walletBalances: WalletBalances | null }) {
   const [modalState, setModalState] = useState<ModalState>('form')
   const [form, setForm] = useState<StartStrategyRequest>({
     ethAmount: '',
@@ -150,6 +150,16 @@ function StartStrategyModal({ onClose, onSuccess }: { onClose: () => void; onSuc
     if (form.usdcAmount && (isNaN(usdc) || usdc < 0)) {
       setValidationError('Invalid USDC amount')
       return
+    }
+    if (walletBalances) {
+      if (form.ethAmount && eth > parseFloat(walletBalances.eth)) {
+        setValidationError(`Insufficient ETH — available: ${Number(walletBalances.eth).toFixed(4)}`)
+        return
+      }
+      if (form.usdcAmount && usdc > parseFloat(walletBalances.usdc)) {
+        setValidationError(`Insufficient USDC — available: ${Number(walletBalances.usdc).toLocaleString('en-US', { maximumFractionDigits: 2 })}`)
+        return
+      }
     }
     setValidationError(null)
     setModalState('executing')
@@ -202,7 +212,18 @@ function StartStrategyModal({ onClose, onSuccess }: { onClose: () => void; onSuc
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-slate-400 mb-1.5">ETH Amount</label>
+                  <div className="flex justify-between items-baseline mb-1.5">
+                    <label className="text-xs font-medium text-slate-400">ETH Amount</label>
+                    {walletBalances && (
+                      <span className="text-xs text-slate-500">
+                        Available: <button
+                          type="button"
+                          onClick={() => setForm(f => ({ ...f, ethAmount: walletBalances.eth }))}
+                          className="text-blue-400 hover:text-blue-300 font-mono underline-offset-2 hover:underline"
+                        >{Number(walletBalances.eth).toFixed(4)}</button>
+                      </span>
+                    )}
+                  </div>
                   <div className="relative">
                     <input
                       type="number"
@@ -217,7 +238,18 @@ function StartStrategyModal({ onClose, onSuccess }: { onClose: () => void; onSuc
                   </div>
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-slate-400 mb-1.5">USDC Amount</label>
+                  <div className="flex justify-between items-baseline mb-1.5">
+                    <label className="text-xs font-medium text-slate-400">USDC Amount</label>
+                    {walletBalances && (
+                      <span className="text-xs text-slate-500">
+                        Available: <button
+                          type="button"
+                          onClick={() => setForm(f => ({ ...f, usdcAmount: Number(walletBalances.usdc).toFixed(2) }))}
+                          className="text-blue-400 hover:text-blue-300 font-mono underline-offset-2 hover:underline"
+                        >{Number(walletBalances.usdc).toLocaleString('en-US', { maximumFractionDigits: 2 })}</button>
+                      </span>
+                    )}
+                  </div>
                   <div className="relative">
                     <input
                       type="number"
@@ -680,6 +712,7 @@ export default function App() {
         <StartStrategyModal
           onClose={() => setShowModal(false)}
           onSuccess={fetchAll}
+          walletBalances={walletBalances}
         />
       )}
     </div>

@@ -15,6 +15,8 @@ export interface PoolState {
   sqrtPriceX96: string
   tick: number
   price: string // human-readable price token1/token0
+  decimals0: number
+  decimals1: number
 }
 
 export interface RebalanceRequest {

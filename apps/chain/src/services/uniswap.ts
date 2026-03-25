@@ -122,6 +122,8 @@ export async function getPoolStateByPair(
     sqrtPriceX96: sqrtPriceX96.toString(),
     tick,
     price: price.toFixed(2),
+    decimals0,
+    decimals1,
   }
 }
 

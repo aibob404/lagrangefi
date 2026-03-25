@@ -26,6 +26,8 @@ data class PoolStateResponse(
     val sqrtPriceX96: String,
     val tick: Int,
     val price: String,
+    val decimals0: Int,
+    val decimals1: Int,
 )
 
 @Serializable

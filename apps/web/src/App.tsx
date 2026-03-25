@@ -23,9 +23,9 @@ function feeLabel(fee: number) {
   return (fee / 10000).toFixed(2) + '%'
 }
 
-// Uniswap v3: price = 1.0001^tick, adjusted for WETH(18) / USDC(6) decimals
-function tickToPrice(tick: number): string {
-  const price = Math.pow(1.0001, tick) * 1e12
+// Uniswap v3: price = 1.0001^tick * 10^(decimals0 - decimals1)
+function tickToPrice(tick: number, decimals0: number, decimals1: number): string {
+  const price = Math.pow(1.0001, tick) * Math.pow(10, decimals0 - decimals1)
   return '$' + price.toLocaleString('en-US', { maximumFractionDigits: 2 })
 }
 
@@ -33,7 +33,7 @@ function shortHash(hash: string) {
   return hash.slice(0, 8) + '...' + hash.slice(-6)
 }
 
-function PriceRangeBar({ tick, tickLower, tickUpper }: { tick: number; tickLower: number; tickUpper: number }) {
+function PriceRangeBar({ tick, tickLower, tickUpper, decimals0, decimals1 }: { tick: number; tickLower: number; tickUpper: number; decimals0: number; decimals1: number }) {
   const inRange = tick >= tickLower && tick < tickUpper
   const rangeWidth = tickUpper - tickLower
   const padding = rangeWidth * 0.5
@@ -48,9 +48,9 @@ function PriceRangeBar({ tick, tickLower, tickUpper }: { tick: number; tickLower
   return (
     <div className="mt-4">
       <div className="flex justify-between text-xs text-slate-400 mb-1">
-        <span>{tickToPrice(tickLower)}</span>
-        <span>Current: {tickToPrice(tick)}</span>
-        <span>{tickToPrice(tickUpper)}</span>
+        <span>{tickToPrice(tickLower, decimals0, decimals1)}</span>
+        <span>Current: {tickToPrice(tick, decimals0, decimals1)}</span>
+        <span>{tickToPrice(tickUpper, decimals0, decimals1)}</span>
       </div>
       <div className="relative h-4 bg-slate-700 rounded-full overflow-visible">
         <div
@@ -474,15 +474,17 @@ export default function App() {
               </p>
             )}
           </div>
-          <button
-            onClick={() => setShowModal(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-xl transition-colors"
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-            </svg>
-            Start Strategy
-          </button>
+          {(!position || BigInt(position.liquidity) === 0n) && (
+            <button
+              onClick={() => setShowModal(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-xl transition-colors"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              Start Strategy
+            </button>
+          )}
         </div>
       </div>
 
@@ -500,7 +502,7 @@ export default function App() {
               <Row label="Token ID" value={`#${position.tokenId}`} />
               <Row label="Pair" value={`${tokenLabel(position.token0)} / ${tokenLabel(position.token1)}`} />
               <Row label="Fee Tier" value={feeLabel(position.fee)} />
-              <Row label="Price Range" value={`${tickToPrice(position.tickLower)} → ${tickToPrice(position.tickUpper)}`} />
+              <Row label="Price Range" value={`${poolState ? tickToPrice(position.tickLower, poolState.decimals0, poolState.decimals1) : position.tickLower} → ${poolState ? tickToPrice(position.tickUpper, poolState.decimals0, poolState.decimals1) : position.tickUpper}`} />
               <Row label="Liquidity" value={BigInt(position.liquidity) > 0n ? '✓ Active' : '— Empty'} />
             </>
           ) : (
@@ -512,14 +514,14 @@ export default function App() {
           {poolState ? (
             <>
               <Row label="Price (USDC/WETH)" value={`$${Number(poolState.price).toLocaleString('en-US', { maximumFractionDigits: 2 })}`} />
-              <Row label="Current Price (tick)" value={`${tickToPrice(poolState.tick)} (${poolState.tick})`} />
+              <Row label="Current Price (tick)" value={`${tickToPrice(poolState.tick, poolState.decimals0, poolState.decimals1)} (${poolState.tick})`} />
               <Row label="Status" value={inRange !== null ? <StatusBadge inRange={inRange} /> : '—'} />
             </>
           ) : (
             <p className="text-slate-500 text-sm">Loading...</p>
           )}
           {poolState && position && (
-            <PriceRangeBar tick={poolState.tick} tickLower={position.tickLower} tickUpper={position.tickUpper} />
+            <PriceRangeBar tick={poolState.tick} tickLower={position.tickLower} tickUpper={position.tickUpper} decimals0={poolState.decimals0} decimals1={poolState.decimals1} />
           )}
         </Card>
       </div>

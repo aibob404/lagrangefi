@@ -32,11 +32,19 @@ data class PoolStateResponse(
 )
 
 @Serializable
+data class FeesCollectedResponse(
+    val amount0: String,
+    val amount1: String,
+)
+
+@Serializable
 data class RebalanceResponse(
     val success: Boolean,
     val txHashes: List<String>,
     val newTokenId: String? = null,
     val error: String? = null,
+    val feesCollected: FeesCollectedResponse? = null,
+    val gasUsedWei: String? = null,
 )
 
 @Serializable
@@ -115,6 +123,8 @@ class ChainClient(private val baseUrl: String) {
         newTickLower: Int,
         newTickUpper: Int,
         slippageTolerance: Double,
+        /** Wallet private key (0x...) or BIP39 mnemonic phrase — forwarded to chain service */
+        walletPrivateKey: String,
     ): RebalanceResponse =
         http.post("$baseUrl/execute/rebalance") {
             contentType(ContentType.Application.Json)
@@ -124,6 +134,7 @@ class ChainClient(private val baseUrl: String) {
                 "newTickLower" to newTickLower,
                 "newTickUpper" to newTickUpper,
                 "slippageTolerance" to slippageTolerance,
+                "walletPrivateKey" to walletPrivateKey,
             ))
         }.body()
 }

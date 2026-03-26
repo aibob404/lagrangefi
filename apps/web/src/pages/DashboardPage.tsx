@@ -27,7 +27,7 @@ function daysRunning(createdAt: string) {
 }
 
 // Compute net fees in USD using pool price (token1/token0 = USDC/WETH)
-function computeNetFees(stats: StrategyStats, ethPrice: number, token0: string, token1: string) {
+function computeNetFees(stats: StrategyStats, ethPrice: number, _token0: string, token1: string) {
   const t1Label = tokenLabel(token1)
   const isStableToken1 = t1Label.includes('USDC')
   if (!isStableToken1) return null // can't compute without knowing stable
@@ -386,7 +386,7 @@ export default function DashboardPage() {
                       <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
                     ))}
                   </Pie>
-                  <Tooltip formatter={(v: number, n: string) => [v, n]}
+                  <Tooltip formatter={(v, n) => [v, n]}
                     contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e5e7eb' }} />
                 </PieChart>
               </ResponsiveContainer>

@@ -47,7 +47,7 @@ function daysRunning(createdAt: string) {
   return Math.floor((Date.now() - new Date(createdAt).getTime()) / 86_400_000)
 }
 
-function computeNetFees(stats: StrategyStats, ethPrice: number, token0: string, token1: string) {
+function computeNetFees(stats: StrategyStats, ethPrice: number, _token0: string, token1: string) {
   if (!tokenLabel(token1).includes('USDC')) return null
   const feesToken0Eth = Number(BigInt(stats.feesCollectedToken0)) / 1e18
   const feesToken1Usd = Number(BigInt(stats.feesCollectedToken1)) / 1e6

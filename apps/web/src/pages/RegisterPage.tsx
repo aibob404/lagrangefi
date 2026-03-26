@@ -33,74 +33,81 @@ export default function RegisterPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-900 flex items-center justify-center px-4">
+    <div className="min-h-screen flex items-center justify-center px-4">
       <div className="w-full max-w-sm">
-        <h1 className="text-2xl font-bold text-white mb-1">lagrangefi</h1>
-        <p className="text-slate-400 text-sm mb-8">Create your account</p>
+        <div className="text-center mb-8">
+          <div className="w-12 h-12 bg-gray-900 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-sm">
+            <span className="text-white font-bold text-xl">Δ</span>
+          </div>
+          <h1 className="text-2xl font-bold text-gray-900">lagrangefi</h1>
+          <p className="text-sm text-gray-500 mt-1">Create your account</p>
+        </div>
 
-        <form onSubmit={handleSubmit} className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-6 space-y-4">
-          <h2 className="text-lg font-semibold text-white">Register</h2>
+        <div className="bg-white/60 backdrop-blur-sm rounded-2xl shadow-sm border border-white/80 p-6">
+          <h2 className="text-base font-semibold text-gray-900 mb-5">Get started</h2>
 
           {error && (
-            <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-sm rounded-lg px-3 py-2">
+            <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2.5 mb-4">
               {error}
             </div>
           )}
 
-          <div>
-            <label className="block text-xs text-slate-400 mb-1">Username</label>
-            <input
-              className="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 transition-colors"
-              value={username}
-              onChange={e => setUsername(e.target.value)}
-              placeholder="username"
-              autoComplete="username"
-              minLength={3}
-              maxLength={64}
-              required
-            />
-          </div>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1.5">Username</label>
+              <input
+                className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:border-blue-500 focus:bg-white transition-colors"
+                value={username}
+                onChange={e => setUsername(e.target.value)}
+                placeholder="username"
+                autoComplete="username"
+                minLength={3}
+                maxLength={64}
+                required
+              />
+            </div>
 
-          <div>
-            <label className="block text-xs text-slate-400 mb-1">Password</label>
-            <input
-              type="password"
-              className="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 transition-colors"
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-              placeholder="min 8 characters"
-              autoComplete="new-password"
-              minLength={8}
-              required
-            />
-          </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1.5">Password</label>
+              <input
+                type="password"
+                className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:border-blue-500 focus:bg-white transition-colors"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                placeholder="min 8 characters"
+                autoComplete="new-password"
+                minLength={8}
+                required
+              />
+            </div>
 
-          <div>
-            <label className="block text-xs text-slate-400 mb-1">Confirm password</label>
-            <input
-              type="password"
-              className="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 transition-colors"
-              value={confirm}
-              onChange={e => setConfirm(e.target.value)}
-              placeholder="••••••••"
-              autoComplete="new-password"
-              required
-            />
-          </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1.5">Confirm password</label>
+              <input
+                type="password"
+                className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:border-blue-500 focus:bg-white transition-colors"
+                value={confirm}
+                onChange={e => setConfirm(e.target.value)}
+                placeholder="••••••••"
+                autoComplete="new-password"
+                required
+              />
+            </div>
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm font-medium py-2 rounded-lg transition-colors"
-          >
-            {loading ? 'Creating account...' : 'Create account'}
-          </button>
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full bg-gray-900 hover:bg-gray-800 disabled:opacity-50 text-white text-sm font-semibold py-2.5 rounded-lg transition-colors"
+            >
+              {loading ? 'Creating account…' : 'Create account'}
+            </button>
+          </form>
 
-          <p className="text-center text-xs text-slate-400">
+          <p className="text-center text-xs text-gray-500 mt-4">
             Already have an account?{' '}
-            <Link to="/login" className="text-blue-400 hover:text-blue-300">Sign in</Link>
+            <Link to="/login" className="text-blue-600 hover:text-blue-700 font-medium">Sign in</Link>
           </p>
-        </form>
+        </div>
       </div>
     </div>
   )

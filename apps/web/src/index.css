@@ -2,17 +2,11 @@
 @tailwind components;
 @tailwind utilities;
 
-@layer components {
-  .input {
-    @apply bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 transition-colors;
-  }
-}
-
 body {
   margin: 0;
-  background-color: #0f1117;
-  color: #e2e8f0;
-  font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
+  background-color: #d4d4d8;
+  color: #111827;
+  font-family: 'Inter', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 

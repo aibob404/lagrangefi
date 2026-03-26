@@ -1,18 +1,20 @@
-import { useState, useEffect, useRef, type FormEvent } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useState, useEffect, useRef, useCallback, type FormEvent } from 'react'
+import { Link } from 'react-router-dom'
 import {
   fetchStrategies, startStrategy, createStrategy,
   pauseStrategy, resumeStrategy, stopStrategy,
-  fetchStrategyStats, fetchStrategyRebalances, fetchWalletBalances,
+  fetchStrategyStats, fetchStrategyRebalances,
+  fetchPosition, fetchPoolState, fetchWalletBalances,
 } from '../api'
-import type { Strategy, StrategyStats, RebalanceEvent } from '../types'
+import type { Strategy, StrategyStats, RebalanceEvent, Position, PoolState } from '../types'
+import { useAuth } from '../context/AuthContext'
 
 interface WalletBalances { address: string; eth: string; usdc: string }
 
 const FEE_TIERS = [
-  { value: 100, label: '0.01%' },
-  { value: 500, label: '0.05%' },
-  { value: 3000, label: '0.30%' },
+  { value: 100,   label: '0.01%' },
+  { value: 500,   label: '0.05%' },
+  { value: 3000,  label: '0.30%' },
   { value: 10000, label: '1.00%' },
 ]
 
@@ -22,144 +24,169 @@ const TOKEN_LABELS: Record<string, string> = {
   '0xff970a61a04b1ca14834a43f5de4533ebddb5cc8': 'USDC.e',
 }
 function tokenLabel(addr: string) {
-  return TOKEN_LABELS[addr.toLowerCase()] ?? addr.slice(0, 6) + '...' + addr.slice(-4)
+  return TOKEN_LABELS[addr.toLowerCase()] ?? addr.slice(0, 6) + '…' + addr.slice(-4)
 }
-function feeLabel(fee: number) {
-  return (fee / 10000).toFixed(2) + '%'
+function feeLabel(fee: number) { return (fee / 10000).toFixed(2) + '%' }
+function shortHash(h: string) { return h.slice(0, 8) + '…' + h.slice(-6) }
+function tokenDecimals(addr: string) {
+  return (TOKEN_LABELS[addr.toLowerCase()] ?? '').includes('USDC') ? 6 : 18
 }
-function shortHash(h: string) {
-  return h.slice(0, 8) + '...' + h.slice(-6)
+function tickToPrice(tick: number, d0: number, d1: number) {
+  return Math.pow(1.0001, tick) * Math.pow(10, d0 - d1)
 }
-function tokenDecimals(addr: string): number {
-  const label = TOKEN_LABELS[addr.toLowerCase()] ?? ''
-  return label.includes('USDC') ? 6 : 18
+function formatPrice(p: number) { return p.toLocaleString('en-US', { maximumFractionDigits: 2 }) }
+function formatUsd(n: number) {
+  return n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 })
 }
-function tickToPrice(tick: number, decimals0: number, decimals1: number): number {
-  return Math.pow(1.0001, tick) * Math.pow(10, decimals0 - decimals1)
+function weiToEth(wei: string) { return (Number(BigInt(wei)) / 1e18).toFixed(6) }
+function formatRaw(amount: string, decimals: number) {
+  const n = BigInt(amount), d = 10n ** BigInt(decimals)
+  return `${n / d}.${(n % d).toString().padStart(decimals, '0').slice(0, 4)}`
 }
-function formatPrice(price: number): string {
-  return price.toLocaleString('en-US', { maximumFractionDigits: 2 })
+function daysRunning(createdAt: string) {
+  return Math.floor((Date.now() - new Date(createdAt).getTime()) / 86_400_000)
 }
-function weiToEth(wei: string): string {
-  const n = BigInt(wei)
-  const eth = Number(n) / 1e18
-  return eth.toFixed(6)
+
+function computeNetFees(stats: StrategyStats, ethPrice: number, _token0: string, token1: string) {
+  if (!tokenLabel(token1).includes('USDC')) return null
+  const feesToken0Eth = Number(BigInt(stats.feesCollectedToken0)) / 1e18
+  const feesToken1Usd = Number(BigInt(stats.feesCollectedToken1)) / 1e6
+  const gasEth = Number(BigInt(stats.gasCostWei)) / 1e18
+  const feesUsd = feesToken1Usd + feesToken0Eth * ethPrice
+  const gasUsd = gasEth * ethPrice
+  return { feesUsd, gasUsd, netUsd: feesUsd - gasUsd }
 }
-function formatRawAmount(amount: string, decimals: number): string {
-  const n = BigInt(amount)
-  const d = 10n ** BigInt(decimals)
-  const whole = n / d
-  const frac = n % d
-  return `${whole}.${frac.toString().padStart(decimals, '0').slice(0, 4)}`
+
+// ── Sub-components ──────────────────────────────────────────────────────────
+
+const STATUS_STYLES: Record<string, string> = {
+  active:  'bg-emerald-50 text-emerald-700 border border-emerald-200',
+  paused:  'bg-amber-50 text-amber-700 border border-amber-200',
+  stopped: 'bg-gray-100 text-gray-500 border border-gray-200',
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const styles: Record<string, string> = {
-    active: 'bg-emerald-500/20 text-emerald-400 ring-emerald-500/30',
-    paused: 'bg-yellow-500/20 text-yellow-400 ring-yellow-500/30',
-    stopped: 'bg-slate-500/20 text-slate-400 ring-slate-500/30',
-  }
   return (
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ring-1 ${styles[status] ?? styles.stopped}`}>
-      {status === 'active' && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />}
+    <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold ${STATUS_STYLES[status] ?? STATUS_STYLES.stopped}`}>
+      {status === 'active' && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />}
       {status}
     </span>
   )
 }
 
-function StatsCard({ stats, token0, token1 }: { stats: StrategyStats; token0: string; token1: string }) {
-  const t0Label = tokenLabel(token0)
-  const t1Label = tokenLabel(token1)
-  // USDC has 6 decimals, WETH 18 — heuristic: if "USDC" in label use 6 else 18
-  const dec0 = t0Label.includes('USDC') ? 6 : 18
-  const dec1 = t1Label.includes('USDC') ? 6 : 18
-
+function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-5 space-y-2">
-      <h3 className="text-xs font-semibold uppercase tracking-widest text-slate-400 mb-3">Analytics</h3>
-      <Row label="Rebalances" value={stats.totalRebalances} />
-      <Row label="Time in range" value={`${stats.timeInRangePct.toFixed(1)}%`} />
-      <Row label={`Fees (${t0Label})`} value={formatRawAmount(stats.feesCollectedToken0, dec0)} />
-      <Row label={`Fees (${t1Label})`} value={formatRawAmount(stats.feesCollectedToken1, dec1)} />
-      <Row label="Gas spent (ETH)" value={weiToEth(stats.gasCostWei)} />
-      <Row
-        label="Avg rebalance interval"
-        value={stats.avgRebalanceIntervalHours != null ? `${stats.avgRebalanceIntervalHours.toFixed(1)}h` : '—'}
-      />
+    <div className="flex justify-between items-center py-1.5 border-b border-gray-100/60 last:border-0">
+      <span className="text-xs text-gray-400">{label}</span>
+      <span className="text-xs font-medium text-gray-700 font-mono">{value}</span>
     </div>
   )
 }
 
-function Row({ label, value }: { label: string; value: React.ReactNode }) {
+function MetricCard({ label, value, sub, accent }: {
+  label: string; value: React.ReactNode; sub?: React.ReactNode
+  accent?: 'green' | 'red' | 'blue' | 'amber'
+}) {
+  const color =
+    accent === 'green' ? 'text-emerald-600' :
+    accent === 'red'   ? 'text-red-500' :
+    accent === 'blue'  ? 'text-blue-600' :
+    accent === 'amber' ? 'text-amber-500' :
+    'text-gray-900'
   return (
-    <div className="flex justify-between items-center py-1 border-b border-slate-700/40 last:border-0">
-      <span className="text-sm text-slate-400">{label}</span>
-      <span className="text-sm font-mono text-slate-200">{value}</span>
+    <div className="bg-white/40 border border-white/60 rounded-xl p-4">
+      <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">{label}</p>
+      <p className={`text-2xl font-bold tracking-tight ${color}`}>{value}</p>
+      {sub && <p className="text-xs text-gray-500 mt-1">{sub}</p>}
+    </div>
+  )
+}
+
+function PriceRangeBar({ tick, tickLower, tickUpper, decimals0, decimals1 }: {
+  tick: number; tickLower: number; tickUpper: number; decimals0: number; decimals1: number
+}) {
+  const inRange = tick >= tickLower && tick < tickUpper
+  const pad = (tickUpper - tickLower) * 0.5
+  const min = tickLower - pad, max = tickUpper + pad, total = max - min
+  const loPct = ((tickLower - min) / total) * 100
+  const hiPct = ((tickUpper - min) / total) * 100
+  const curPct = Math.min(Math.max(((tick - min) / total) * 100, 0), 100)
+  const lo = tickToPrice(tickLower, decimals0, decimals1)
+  const hi = tickToPrice(tickUpper, decimals0, decimals1)
+  const cur = tickToPrice(tick, decimals0, decimals1)
+  return (
+    <div className="mt-3">
+      <div className="flex justify-between text-xs text-gray-400 mb-1.5">
+        <span>${formatPrice(lo)}</span>
+        <span className="font-medium text-gray-700">Now: ${formatPrice(cur)}</span>
+        <span>${formatPrice(hi)}</span>
+      </div>
+      <div className="relative h-3 bg-gray-300 rounded-full">
+        <div className={`absolute h-full rounded-full ${inRange ? 'bg-emerald-400' : 'bg-red-400'}`}
+          style={{ left: `${loPct}%`, width: `${hiPct - loPct}%` }} />
+        <div className={`absolute top-1/2 -translate-y-1/2 w-1 h-5 rounded-full ${inRange ? 'bg-emerald-600' : 'bg-red-600'}`}
+          style={{ left: `${curPct}%` }} />
+      </div>
+      <div className="flex justify-between text-xs mt-1.5">
+        <span className="text-gray-400">Lower bound</span>
+        <span className={`font-semibold ${inRange ? 'text-emerald-600' : 'text-red-500'}`}>
+          {inRange ? 'In Range' : 'Out of Range'}
+        </span>
+        <span className="text-gray-400">Upper bound</span>
+      </div>
     </div>
   )
 }
 
 function RebalanceTable({ events, token0, token1 }: { events: RebalanceEvent[]; token0: string; token1: string }) {
-  const dec0 = tokenDecimals(token0)
-  const dec1 = tokenDecimals(token1)
-  if (events.length === 0) return <p className="text-slate-500 text-sm py-4 text-center">No rebalances yet</p>
-
+  const dec0 = tokenDecimals(token0), dec1 = tokenDecimals(token1)
+  if (events.length === 0)
+    return <p className="text-gray-400 text-sm text-center py-6">No rebalances yet</p>
   return (
     <div className="overflow-x-auto">
-      <table className="w-full text-sm">
+      <table className="w-full text-xs">
         <thead>
-          <tr className="text-xs uppercase tracking-wider text-slate-500 border-b border-slate-700">
-            <th className="text-left pb-2 font-medium">Time</th>
-            <th className="text-left pb-2 font-medium">Status</th>
-            <th className="text-left pb-2 font-medium">New Range</th>
-            <th className="text-left pb-2 font-medium">Fees collected</th>
-            <th className="text-left pb-2 font-medium">Position in</th>
-            <th className="text-left pb-2 font-medium">Position out</th>
-            <th className="text-left pb-2 font-medium">Gas (ETH)</th>
-            <th className="text-left pb-2 font-medium">Tx</th>
+          <tr className="text-gray-400 border-b border-gray-100">
+            {['Time', 'Status', 'New Range', 'Fees', 'Gas (ETH)', 'Tx'].map(h => (
+              <th key={h} className="text-left pb-2.5 font-semibold">{h}</th>
+            ))}
           </tr>
         </thead>
-        <tbody>
+        <tbody className="divide-y divide-gray-50">
           {events.map(r => (
-            <tr key={r.id} className="border-b border-slate-700/40 last:border-0">
-              <td className="py-2 text-slate-400 font-mono text-xs">{new Date(r.triggeredAt).toLocaleString()}</td>
+            <tr key={r.id} className={`transition-colors ${r.status === 'failed' ? 'bg-red-50/40' : 'hover:bg-white/30'}`}>
+              <td className="py-2 text-gray-500 font-mono whitespace-nowrap">
+                {new Date(r.triggeredAt).toLocaleString()}
+              </td>
               <td className="py-2">
-                <span className={`px-2 py-0.5 rounded text-xs font-medium ${
-                  r.status === 'success' ? 'bg-emerald-500/20 text-emerald-400' :
-                  r.status === 'failed' ? 'bg-red-500/20 text-red-400' :
-                  'bg-yellow-500/20 text-yellow-400'
+                <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${
+                  r.status === 'success' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
+                  r.status === 'failed'  ? 'bg-red-50 text-red-700 border border-red-200' :
+                  'bg-amber-50 text-amber-700 border border-amber-200'
                 }`}>{r.status}</span>
               </td>
-              <td className="py-2 text-slate-300 font-mono text-xs">
+              <td className="py-2 text-gray-600 font-mono">
                 {r.newTickLower != null
                   ? `$${formatPrice(tickToPrice(r.newTickLower, dec0, dec1))} → $${formatPrice(tickToPrice(r.newTickUpper!, dec0, dec1))}`
-                  : '—'}
+                  : <span className="text-red-400">{r.errorMessage ?? '—'}</span>}
               </td>
-              <td className="py-2 text-slate-400 font-mono text-xs">
+              <td className="py-2 text-gray-500 font-mono">
                 {r.feesCollectedToken0 != null
-                  ? `${formatRawAmount(r.feesCollectedToken0, dec0)} ${tokenLabel(token0)} / ${formatRawAmount(r.feesCollectedToken1!, dec1)} ${tokenLabel(token1)}`
+                  ? `${formatRaw(r.feesCollectedToken0, dec0)} ${tokenLabel(token0)}`
                   : '—'}
               </td>
-              <td className="py-2 text-slate-400 font-mono text-xs">
-                {r.positionToken0Start != null
-                  ? `${formatRawAmount(r.positionToken0Start, dec0)} ${tokenLabel(token0)} + ${formatRawAmount(r.positionToken1Start!, dec1)} ${tokenLabel(token1)}`
-                  : '—'}
-              </td>
-              <td className="py-2 text-slate-400 font-mono text-xs">
-                {r.positionToken0End != null
-                  ? `${formatRawAmount(r.positionToken0End, dec0)} ${tokenLabel(token0)} + ${formatRawAmount(r.positionToken1End!, dec1)} ${tokenLabel(token1)}`
-                  : '—'}
-              </td>
-              <td className="py-2 text-slate-400 font-mono text-xs">
+              <td className="py-2 text-gray-500 font-mono">
                 {r.gasCostWei != null ? weiToEth(r.gasCostWei) : '—'}
               </td>
-              <td className="py-2 text-slate-400 font-mono text-xs">
+              <td className="py-2">
                 {r.txHashes
                   ? JSON.parse(r.txHashes).slice(0, 1).map((h: string) => (
-                      <a key={h} href={`https://arbiscan.io/tx/${h}`} target="_blank" rel="noopener noreferrer"
-                         className="text-blue-400 hover:text-blue-300 underline">{shortHash(h)}</a>
-                    ))
-                  : r.errorMessage ?? '—'}
+                    <a key={h} href={`https://arbiscan.io/tx/${h}`} target="_blank" rel="noopener noreferrer"
+                      className="text-blue-600 hover:text-blue-700 font-mono underline underline-offset-2">
+                      {shortHash(h)}
+                    </a>
+                  ))
+                  : <span className="text-gray-400">—</span>}
               </td>
             </tr>
           ))}
@@ -169,135 +196,173 @@ function RebalanceTable({ events, token0, token1 }: { events: RebalanceEvent[]; 
   )
 }
 
+function OnboardingState({ hasWallet }: { hasWallet: boolean }) {
+  return (
+    <div className="bg-white/60 backdrop-blur-sm rounded-2xl border border-white/80 shadow-sm flex flex-col items-center justify-center py-20 text-center">
+      <div className="w-16 h-16 bg-white/60 backdrop-blur-sm rounded-2xl flex items-center justify-center mb-5 border border-white/80 shadow-sm">
+        <span className="text-2xl font-bold text-gray-400">Δ</span>
+      </div>
+      <h2 className="text-lg font-bold text-gray-900 mb-2">Welcome to lagrangefi</h2>
+      <p className="text-gray-500 text-sm max-w-xs mb-8">
+        Automatically rebalances your Uniswap v3 ETH/USDC position to keep it in range.
+      </p>
+      <div className="flex flex-col items-center gap-3 w-full max-w-xs">
+        <div className={`w-full flex items-center gap-4 rounded-2xl border p-4 ${
+          hasWallet ? 'bg-emerald-50/60 border-emerald-200' : 'bg-white/60 backdrop-blur-sm border-white/80 shadow-sm'
+        }`}>
+          <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold shrink-0 ${
+            hasWallet ? 'bg-emerald-500 text-white' : 'bg-gray-900 text-white'
+          }`}>{hasWallet ? '✓' : '1'}</div>
+          <div className="text-left">
+            <p className={`text-sm font-semibold ${hasWallet ? 'text-emerald-700' : 'text-gray-900'}`}>
+              {hasWallet ? 'Wallet configured' : 'Add your wallet'}
+            </p>
+            {!hasWallet && <p className="text-xs text-gray-400">BIP39 mnemonic or private key</p>}
+          </div>
+          {!hasWallet && (
+            <Link to="/profile" className="ml-auto bg-gray-900 hover:bg-gray-800 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors">
+              Go →
+            </Link>
+          )}
+        </div>
+        <div className={`w-full flex items-center gap-4 rounded-2xl border p-4 ${
+          hasWallet ? 'bg-white/60 backdrop-blur-sm border-white/80 shadow-sm' : 'bg-gray-100/40 border-gray-200/60 opacity-60'
+        }`}>
+          <div className="w-8 h-8 rounded-full bg-gray-900 text-white flex items-center justify-center text-sm font-bold shrink-0">2</div>
+          <div className="text-left">
+            <p className="text-sm font-semibold text-gray-900">Create a strategy</p>
+            <p className="text-xs text-gray-400">Deposit ETH + USDC, set range width</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Main component ─────────────────────────────────────────────────────────
 export default function StrategyPage() {
-  const navigate = useNavigate()
-  const [strategies, setStrategies] = useState<Strategy[]>([])
-  const [stats, setStats] = useState<Record<number, StrategyStats>>({})
-  const [rebalances, setRebalances] = useState<Record<number, RebalanceEvent[]>>({})
-  const [expandedId, setExpandedId] = useState<number | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const { user } = useAuth()
+
+  const [strategies,    setStrategies]  = useState<Strategy[]>([])
+  const [stats,         setStats]       = useState<Record<number, StrategyStats>>({})
+  const [rebalances,    setRebalances]  = useState<Record<number, RebalanceEvent[]>>({})
+  const [positions,     setPositions]   = useState<Record<number, Position>>({})
+  const [poolStates,    setPoolStates]  = useState<Record<number, PoolState>>({})
+  const [expandedId,    setExpandedId]  = useState<number | null>(null)
+  const [tabMap,        setTabMap]      = useState<Record<number, 'overview' | 'history'>>({})
+  const [confirmStopId, setConfirmStopId] = useState<number | null>(null)
+  const [error,         setError]       = useState<string | null>(null)
   const [walletBalances, setWalletBalances] = useState<WalletBalances | null>(null)
+  const [lastUpdated,   setLastUpdated] = useState<Date | null>(null)
+  const [refreshing,    setRefreshing]  = useState(false)
 
   // Create form
-  const [showCreate, setShowCreate] = useState(false)
-  const [createMode, setCreateMode] = useState<'mint' | 'register'>('mint')
-  const [formState, setFormState] = useState<'form' | 'submitting' | 'success' | 'error'>('form')
-  // mint mode fields
-  const [createName, setCreateName] = useState('')
-  const [ethAmount, setEthAmount] = useState('')
-  const [usdcAmount, setUsdcAmount] = useState('')
-  const [feeTier, setFeeTier] = useState(500)
-  // register mode fields
+  const [showCreate,    setShowCreate]   = useState(false)
+  const [showAdvanced,  setShowAdvanced] = useState(false)
+  const [createMode,    setCreateMode]   = useState<'mint' | 'register'>('mint')
+  const [formState,     setFormState]    = useState<'form' | 'submitting' | 'success' | 'error'>('form')
+  const [createName,    setCreateName]   = useState('')
+  const [ethAmount,     setEthAmount]    = useState('')
+  const [usdcAmount,    setUsdcAmount]   = useState('')
+  const [feeTier,       setFeeTier]      = useState(500)
   const [createTokenId, setCreateTokenId] = useState('')
-  // shared
-  const [createRange, setCreateRange] = useState(5)
+  const [createRange,   setCreateRange]  = useState(5)
   const [createSlippage, setCreateSlippage] = useState('0.5')
   const [createInterval, setCreateInterval] = useState('60')
-  const [createError, setCreateError] = useState<string | null>(null)
-  const [successData, setSuccessData] = useState<{ tokenId: string; txHashes: string[] } | null>(null)
+  const [createError,   setCreateError]  = useState<string | null>(null)
+  const [successData,   setSuccessData]  = useState<{ tokenId: string; txHashes: string[] } | null>(null)
   const balancesLoadedRef = useRef(false)
+
+  const load = useCallback(async () => {
+    setRefreshing(true)
+    try {
+      setStrategies(await fetchStrategies())
+      setLastUpdated(new Date())
+      setError(null)
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to load strategies'
+      if (msg !== 'Unauthorized') setError(msg)
+    } finally {
+      setRefreshing(false)
+    }
+  }, [])
 
   useEffect(() => {
     load()
-  }, [])
-
-  async function load() {
-    try {
-      const list = await fetchStrategies()
-      setStrategies(list)
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to load strategies')
-    }
-  }
+    const iv = setInterval(load, 30_000)
+    return () => clearInterval(iv)
+  }, [load])
 
   async function loadBalances() {
     if (balancesLoadedRef.current) return
     balancesLoadedRef.current = true
-    try {
-      const b = await fetchWalletBalances()
-      setWalletBalances(b)
-    } catch {
-      // balances are optional — ignore errors
-    }
+    try { setWalletBalances(await fetchWalletBalances()) }
+    catch { /* optional */ }
   }
 
   function openCreate() {
-    setShowCreate(true)
-    setFormState('form')
-    setCreateError(null)
-    setSuccessData(null)
+    setShowCreate(true); setFormState('form')
+    setCreateError(null); setSuccessData(null)
+    setShowAdvanced(false); setCreateMode('mint')
     loadBalances()
   }
-
   function closeCreate() {
-    setShowCreate(false)
-    setFormState('form')
-    setCreateError(null)
-    setSuccessData(null)
+    setShowCreate(false); setFormState('form')
+    setCreateError(null); setSuccessData(null)
   }
 
-  async function expandStrategy(id: number, _token0: string, _token1: string) {
+  async function expandStrategy(id: number) {
     if (expandedId === id) { setExpandedId(null); return }
     setExpandedId(id)
-    const [s, r] = await Promise.all([
+    if (!tabMap[id]) setTabMap(prev => ({ ...prev, [id]: 'overview' }))
+    const strategy = strategies.find(s => s.id === id)
+    const isActive = strategy?.status === 'active'
+    const [s, r, pos, pool] = await Promise.all([
       fetchStrategyStats(id),
       fetchStrategyRebalances(id),
+      isActive ? fetchPosition().catch(() => null) : Promise.resolve(null),
+      isActive ? fetchPoolState().catch(() => null) : Promise.resolve(null),
     ])
     setStats(prev => ({ ...prev, [id]: s }))
     setRebalances(prev => ({ ...prev, [id]: r }))
+    if (pos)  setPositions(prev  => ({ ...prev, [id]: pos }))
+    if (pool) setPoolStates(prev => ({ ...prev, [id]: pool }))
   }
 
-  async function handlePause(id: number) {
-    await pauseStrategy(id)
-    load()
+  function setTab(id: number, tab: 'overview' | 'history') {
+    setTabMap(prev => ({ ...prev, [id]: tab }))
   }
 
+  async function handlePause(id: number)  { await pauseStrategy(id); load() }
   async function handleResume(id: number) {
-    try {
-      await resumeStrategy(id)
-      load()
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to resume')
-    }
+    try { await resumeStrategy(id); load() }
+    catch (err: unknown) { setError(err instanceof Error ? err.message : 'Failed to resume') }
   }
-
   async function handleStop(id: number) {
-    if (!confirm('Stop this strategy permanently?')) return
     await stopStrategy(id)
-    setExpandedId(null)
-    load()
+    setConfirmStopId(null); setExpandedId(null); load()
   }
 
   async function handleCreate(e: FormEvent) {
-    e.preventDefault()
-    setCreateError(null)
-    setFormState('submitting')
+    e.preventDefault(); setCreateError(null); setFormState('submitting')
     try {
       if (createMode === 'mint') {
         const result = await startStrategy({
-          name: createName,
-          ethAmount,
-          usdcAmount,
-          feeTier,
+          name: createName, ethAmount, usdcAmount, feeTier,
           rangePercent: createRange / 100,
           slippageTolerance: parseFloat(createSlippage) / 100,
           pollIntervalSeconds: parseInt(createInterval, 10),
         })
-        setSuccessData(result)
-        setFormState('success')
-        balancesLoadedRef.current = false
-        load()
+        setSuccessData(result); setFormState('success')
+        balancesLoadedRef.current = false; load()
       } else {
         await createStrategy({
-          name: createName,
-          tokenId: createTokenId,
+          name: createName, tokenId: createTokenId,
           rangePercent: createRange / 100,
           slippageTolerance: parseFloat(createSlippage) / 100,
           pollIntervalSeconds: parseInt(createInterval, 10),
         })
-        closeCreate()
-        balancesLoadedRef.current = false
-        load()
+        closeCreate(); balancesLoadedRef.current = false; load()
       }
     } catch (err: unknown) {
       setCreateError(err instanceof Error ? err.message : 'Failed to create strategy')
@@ -309,275 +374,258 @@ export default function StrategyPage() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-xl font-bold text-white">Strategies</h1>
-        {!hasActive && (
+      {/* Header */}
+      <div className="flex items-start justify-between mb-7">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Strategies</h1>
+          <p className="text-sm text-gray-500 mt-0.5">Uniswap v3 · Arbitrum</p>
+        </div>
+        <div className="flex items-center gap-3 mt-1">
+          {refreshing ? (
+            <span className="flex items-center gap-1.5 text-xs text-gray-400">
+              <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+              Refreshing
+            </span>
+          ) : lastUpdated ? (
+            <span className="text-xs text-gray-400">Updated {lastUpdated.toLocaleTimeString()}</span>
+          ) : null}
           <button
             onClick={openCreate}
-            className="bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors"
+            disabled={hasActive}
+            title={hasActive ? 'Stop or pause your active strategy first' : undefined}
+            className="bg-gray-900 hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold px-4 py-2 rounded-xl transition-colors"
           >
-            New strategy
+            + New strategy
           </button>
-        )}
+        </div>
       </div>
 
+      {/* Error banner */}
       {error && (
-        <div className="mb-4 bg-red-500/10 border border-red-500/30 text-red-400 text-sm rounded-lg px-4 py-3">
+        <div className="mb-5 flex items-center justify-between bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl px-4 py-3">
           {error}
+          <button onClick={() => setError(null)} className="ml-3 text-red-400 hover:text-red-600 shrink-0">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
         </div>
       )}
 
-      {showCreate && (
-        <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-6 mb-6">
-
-          {/* Header */}
+      {/* ── Create form ─────────────────────────────────────────────────────── */}
+      {showCreate && !hasActive && (
+        <div className="bg-white/60 backdrop-blur-sm rounded-2xl border border-white/80 shadow-sm p-6 mb-6">
           <div className="flex items-center justify-between mb-5">
-            <div>
-              <h2 className="text-base font-semibold text-white">New strategy</h2>
-              <p className="text-xs text-slate-400 mt-0.5">
-                {createMode === 'mint' ? 'Create a new WETH/USDC position and start auto-rebalancing' : 'Register an existing Uniswap v3 position'}
-              </p>
-            </div>
-            {formState !== 'submitting' && (
-              <button type="button" onClick={closeCreate} className="text-slate-400 hover:text-slate-200 transition-colors">
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            )}
+            <h2 className="text-base font-semibold text-gray-900">New strategy</h2>
+            <button onClick={closeCreate} className="text-gray-400 hover:text-gray-600 transition-colors">
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
           </div>
 
-          {/* Success state */}
           {formState === 'success' && successData && (
-            <div className="text-center space-y-4">
-              <div className="w-14 h-14 rounded-full bg-emerald-500/20 flex items-center justify-center mx-auto">
-                <svg className="w-7 h-7 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
-                </svg>
-              </div>
-              <div>
-                <p className="text-white font-semibold">Strategy started!</p>
-                <p className="text-slate-400 text-sm mt-1">
-                  Position <span className="text-white font-mono">#{successData.tokenId}</span> is now active and will auto-rebalance.
-                </p>
+            <div className="space-y-4">
+              <div className="flex items-center gap-3 bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3">
+                <span className="w-6 h-6 rounded-full bg-emerald-500 text-white flex items-center justify-center text-xs font-bold shrink-0">✓</span>
+                <div>
+                  <p className="text-sm font-semibold text-emerald-800">Strategy started!</p>
+                  <p className="text-xs text-emerald-600 font-mono">Position NFT #{successData.tokenId}</p>
+                </div>
               </div>
               {successData.txHashes.length > 0 && (
-                <div className="bg-slate-900/50 border border-slate-700/50 rounded-lg p-3 text-left space-y-1.5">
-                  <p className="text-xs text-slate-500 uppercase tracking-wider font-medium mb-2">Transactions</p>
-                  {successData.txHashes.map((h, i) => (
-                    <div key={h} className="flex items-center justify-between">
-                      <span className="text-xs text-slate-500">{['Wrap', 'Swap', 'Mint'][i] ?? `Tx ${i + 1}`}</span>
-                      <a href={`https://arbiscan.io/tx/${h}`} target="_blank" rel="noopener noreferrer"
-                        className="text-xs text-blue-400 hover:text-blue-300 font-mono underline">
-                        {h.slice(0, 8)}…{h.slice(-6)}
-                      </a>
-                    </div>
-                  ))}
+                <div className="bg-white/40 border border-white/60 rounded-xl p-4">
+                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Transactions</p>
+                  <div className="space-y-1.5">
+                    {successData.txHashes.map((h, i) => (
+                      <div key={h} className="flex items-center justify-between">
+                        <span className="text-xs text-gray-400">Step {i + 1}</span>
+                        <a href={`https://arbiscan.io/tx/${h}`} target="_blank" rel="noopener noreferrer"
+                          className="text-xs text-blue-600 hover:text-blue-700 font-mono underline underline-offset-2">
+                          {shortHash(h)}
+                        </a>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
-              <button onClick={closeCreate}
-                className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-xl transition-colors text-sm">
-                Done
+              <button onClick={closeCreate} className="text-sm font-medium text-gray-600 hover:text-gray-900 transition-colors">
+                Close
               </button>
             </div>
           )}
 
-          {/* Submitting state */}
-          {formState === 'submitting' && (
-            <div className="text-center space-y-4 py-6">
-              <svg className="w-10 h-10 text-blue-400 animate-spin mx-auto" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
-              </svg>
-              <div>
-                <p className="text-white font-medium">Creating position on-chain…</p>
-                <p className="text-slate-400 text-xs mt-1">This may take 1–2 minutes. Do not close this page.</p>
-              </div>
-            </div>
-          )}
-
-          {/* Form state (and error retry) */}
-          {(formState === 'form' || formState === 'error') && (
+          {formState !== 'success' && (
             <form onSubmit={handleCreate} className="space-y-5">
-
-              {/* Mode toggle */}
-              <div className="flex gap-1 bg-slate-900/50 rounded-lg p-1">
-                <button type="button" onClick={() => setCreateMode('mint')}
-                  className={`flex-1 text-xs font-medium py-1.5 rounded-md transition-colors ${createMode === 'mint' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>
-                  Create new position
-                </button>
-                <button type="button" onClick={() => setCreateMode('register')}
-                  className={`flex-1 text-xs font-medium py-1.5 rounded-md transition-colors ${createMode === 'register' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>
-                  Register existing
-                </button>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1.5">Strategy name</label>
+                <input type="text" placeholder="My ETH/USDC strategy" value={createName}
+                  onChange={e => setCreateName(e.target.value)} required
+                  className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:border-blue-500 focus:bg-white transition-colors" />
               </div>
 
-              {/* Wallet balances */}
               {walletBalances && (
-                <div className="bg-slate-900/50 border border-slate-700/50 rounded-lg px-4 py-3 flex items-center gap-6">
-                  <span className="text-xs font-semibold uppercase tracking-widest text-slate-500">Wallet</span>
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-xs text-slate-400">ETH</span>
-                    <span className="text-sm font-mono text-white">{Number(walletBalances.eth).toFixed(4)}</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-xs text-slate-400">USDC</span>
-                    <span className="text-sm font-mono text-white">{Number(walletBalances.usdc).toLocaleString('en-US', { maximumFractionDigits: 2 })}</span>
-                  </div>
-                  <span className="text-xs text-slate-600 font-mono ml-auto">
-                    {walletBalances.address.slice(0, 6)}…{walletBalances.address.slice(-4)}
-                  </span>
+                <div className="bg-blue-50/60 border border-blue-100 rounded-xl px-4 py-3 text-xs text-blue-700">
+                  Wallet: <span className="font-mono font-medium">{walletBalances.address.slice(0, 8)}…</span>
+                  <span className="ml-3 font-medium">{Number(walletBalances.eth).toFixed(4)} ETH</span>
+                  <span className="ml-3 font-medium">{Number(walletBalances.usdc).toLocaleString('en-US', { maximumFractionDigits: 0 })} USDC</span>
                 </div>
               )}
 
-              {createError && (
-                <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-sm rounded-lg px-3 py-2">{createError}</div>
+              {createMode === 'mint' && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <div className="flex justify-between items-baseline mb-1.5">
+                      <label className="text-xs font-medium text-gray-600">ETH amount</label>
+                      {walletBalances && (
+                        <button type="button" onClick={() => setEthAmount(Number(walletBalances.eth).toFixed(4))}
+                          className="text-xs text-blue-600 hover:text-blue-700 font-mono">
+                          Max {Number(walletBalances.eth).toFixed(4)}
+                        </button>
+                      )}
+                    </div>
+                    <div className="relative">
+                      <input type="number" min="0" step="0.0001" placeholder="0.0" value={ethAmount}
+                        onChange={e => setEthAmount(e.target.value)}
+                        className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:border-blue-500 focus:bg-white pr-12" />
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-400 font-medium">ETH</span>
+                    </div>
+                  </div>
+                  <div>
+                    <div className="flex justify-between items-baseline mb-1.5">
+                      <label className="text-xs font-medium text-gray-600">USDC amount</label>
+                      {walletBalances && (
+                        <button type="button" onClick={() => setUsdcAmount(Number(walletBalances.usdc).toFixed(2))}
+                          className="text-xs text-blue-600 hover:text-blue-700 font-mono">
+                          Max {Number(walletBalances.usdc).toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                        </button>
+                      )}
+                    </div>
+                    <div className="relative">
+                      <input type="number" min="0" step="1" placeholder="0.0" value={usdcAmount}
+                        onChange={e => setUsdcAmount(e.target.value)}
+                        className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:border-blue-500 focus:bg-white pr-14" />
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-400 font-medium">USDC</span>
+                    </div>
+                  </div>
+                </div>
               )}
 
-              {/* Strategy name */}
               <div>
-                <label className="block text-xs text-slate-400 mb-1">Strategy name</label>
-                <input
-                  className="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 transition-colors"
-                  value={createName} onChange={e => setCreateName(e.target.value)} placeholder="My ETH/USDC strategy" required
-                />
+                <label className="block text-xs font-medium text-gray-600 mb-1.5">Fee tier</label>
+                <div className="grid grid-cols-4 gap-2">
+                  {FEE_TIERS.map(ft => (
+                    <button key={ft.value} type="button" onClick={() => setFeeTier(ft.value)}
+                      className={`py-2 rounded-xl text-xs font-semibold border transition-colors ${
+                        feeTier === ft.value
+                          ? 'bg-gray-900 border-gray-900 text-white'
+                          : 'bg-white border-gray-200 text-gray-600 hover:border-gray-400'
+                      }`}>
+                      {ft.label}
+                    </button>
+                  ))}
+                </div>
               </div>
 
-              {createMode === 'mint' ? (
-                <>
-                  {/* ETH + USDC amounts */}
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <div className="flex justify-between items-baseline mb-1.5">
-                        <label className="text-xs font-medium text-slate-400">ETH amount</label>
-                        {walletBalances && (
-                          <button type="button" onClick={() => setEthAmount(walletBalances.eth)}
-                            className="text-xs text-blue-400 hover:text-blue-300 font-mono">
-                            Max {Number(walletBalances.eth).toFixed(4)}
-                          </button>
-                        )}
-                      </div>
-                      <div className="relative">
-                        <input type="number" min="0" step="0.001" placeholder="0.0" value={ethAmount}
-                          onChange={e => setEthAmount(e.target.value)}
-                          className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 pr-12" />
-                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400 font-medium">ETH</span>
-                      </div>
-                    </div>
-                    <div>
-                      <div className="flex justify-between items-baseline mb-1.5">
-                        <label className="text-xs font-medium text-slate-400">USDC amount</label>
-                        {walletBalances && (
-                          <button type="button" onClick={() => setUsdcAmount(Number(walletBalances.usdc).toFixed(2))}
-                            className="text-xs text-blue-400 hover:text-blue-300 font-mono">
-                            Max {Number(walletBalances.usdc).toLocaleString('en-US', { maximumFractionDigits: 0 })}
-                          </button>
-                        )}
-                      </div>
-                      <div className="relative">
-                        <input type="number" min="0" step="1" placeholder="0.0" value={usdcAmount}
-                          onChange={e => setUsdcAmount(e.target.value)}
-                          className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 pr-14" />
-                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400 font-medium">USDC</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Fee tier */}
-                  <div>
-                    <label className="block text-xs font-medium text-slate-400 mb-1.5">Fee tier</label>
-                    <div className="grid grid-cols-4 gap-2">
-                      {FEE_TIERS.map(ft => (
-                        <button key={ft.value} type="button" onClick={() => setFeeTier(ft.value)}
-                          className={`py-2 rounded-lg text-xs font-medium border transition-colors ${
-                            feeTier === ft.value
-                              ? 'bg-blue-600 border-blue-500 text-white'
-                              : 'bg-slate-800 border-slate-600 text-slate-400 hover:border-slate-500 hover:text-slate-300'
-                          }`}>
-                          {ft.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </>
-              ) : (
-                /* Register mode: token ID */
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1">Position token ID (NFT)</label>
-                  <input
-                    className="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 font-mono focus:outline-none focus:border-blue-500 transition-colors"
-                    value={createTokenId} onChange={e => setCreateTokenId(e.target.value)} placeholder="123456" required={createMode === 'register'}
-                  />
-                </div>
-              )}
-
-              {/* Range slider */}
               <div>
-                <label className="block text-xs text-slate-400 mb-1.5">
-                  {createMode === 'mint' ? 'Price range' : 'Rebalance trigger range'} — <span className="text-white font-medium">±{createRange}%</span> from current price
+                <label className="block text-xs font-medium text-gray-600 mb-1.5">
+                  Price range — <span className="text-gray-900 font-semibold">±{createRange}%</span> from current price
                 </label>
                 <input type="range" min="1" max="20" step="1" value={createRange}
                   onChange={e => setCreateRange(Number(e.target.value))}
-                  className="w-full accent-blue-500" />
-                <div className="flex justify-between text-xs text-slate-500 mt-1">
-                  <span>1% (tight)</span>
-                  <span>20% (wide)</span>
+                  className="w-full accent-gray-900" />
+                <div className="flex justify-between text-xs text-gray-400 mt-1">
+                  <span>1% tight</span><span>20% wide</span>
                 </div>
               </div>
 
-              {/* Advanced: slippage + poll interval */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1">Slippage (%)</label>
-                  <input className="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors"
-                    type="number" step="0.01" min="0.01" max="5" value={createSlippage}
-                    onChange={e => setCreateSlippage(e.target.value)} required />
-                </div>
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1">Poll interval (s)</label>
-                  <input className="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors"
-                    type="number" min="30" max="3600" value={createInterval}
-                    onChange={e => setCreateInterval(e.target.value)} required />
-                </div>
+              <div>
+                <button type="button" onClick={() => setShowAdvanced(v => !v)}
+                  className="text-xs text-gray-400 hover:text-gray-600 flex items-center gap-1 transition-colors">
+                  <svg className={`w-3.5 h-3.5 transition-transform ${showAdvanced ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <polyline points="9 18 15 12 9 6" />
+                  </svg>
+                  Advanced settings
+                </button>
+                {showAdvanced && (
+                  <div className="mt-3 space-y-4 bg-white/40 border border-white/60 rounded-xl p-4">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1.5">Slippage (%)</label>
+                        <input type="number" step="0.01" min="0.01" max="5" value={createSlippage}
+                          onChange={e => setCreateSlippage(e.target.value)} required
+                          className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:border-blue-500 focus:bg-white transition-colors" />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1.5">Poll interval (s)</label>
+                        <input type="number" min="30" max="3600" value={createInterval}
+                          onChange={e => setCreateInterval(e.target.value)} required
+                          className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:border-blue-500 focus:bg-white transition-colors" />
+                      </div>
+                    </div>
+                    <div className="pt-2 border-t border-gray-100">
+                      <div className="flex items-center gap-2 mb-2">
+                        <input type="checkbox" id="useRegister" checked={createMode === 'register'}
+                          onChange={e => setCreateMode(e.target.checked ? 'register' : 'mint')}
+                          className="accent-gray-900" />
+                        <label htmlFor="useRegister" className="text-xs font-medium text-gray-600">
+                          Track existing position NFT instead
+                        </label>
+                      </div>
+                      {createMode === 'register' && (
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 mb-1.5">Position token ID</label>
+                          <input
+                            className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-gray-900 placeholder-gray-400 font-mono focus:outline-none focus:border-blue-500 focus:bg-white transition-colors"
+                            value={createTokenId} onChange={e => setCreateTokenId(e.target.value)}
+                            placeholder="123456" required={createMode === 'register'} />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
 
-              {/* Summary */}
-              <div className="bg-slate-900/50 border border-slate-700/50 rounded-lg p-4 space-y-2">
-                <p className="text-xs font-medium text-slate-400 uppercase tracking-wider mb-2">Summary</p>
+              <div className="bg-white/40 border border-white/60 rounded-xl p-4 space-y-2">
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Summary</p>
                 {createMode === 'mint' ? (
                   <>
                     <div className="flex justify-between text-xs">
-                      <span className="text-slate-500">Deposit</span>
-                      <span className="text-slate-300 font-mono">{ethAmount || '0'} ETH + {usdcAmount || '0'} USDC</span>
+                      <span className="text-gray-400">Deposit</span>
+                      <span className="text-gray-700 font-mono">{ethAmount || '0'} ETH + {usdcAmount || '0'} USDC</span>
                     </div>
                     <div className="flex justify-between text-xs">
-                      <span className="text-slate-500">Pool</span>
-                      <span className="text-slate-300">WETH / USDC · {FEE_TIERS.find(f => f.value === feeTier)?.label}</span>
+                      <span className="text-gray-400">Pool</span>
+                      <span className="text-gray-700">WETH / USDC · {FEE_TIERS.find(f => f.value === feeTier)?.label}</span>
                     </div>
                   </>
                 ) : (
                   <div className="flex justify-between text-xs">
-                    <span className="text-slate-500">Position NFT</span>
-                    <span className="text-slate-300 font-mono">#{createTokenId || '—'}</span>
+                    <span className="text-gray-400">Position NFT</span>
+                    <span className="text-gray-700 font-mono">#{createTokenId || '—'}</span>
                   </div>
                 )}
                 <div className="flex justify-between text-xs">
-                  <span className="text-slate-500">Range</span>
-                  <span className="text-slate-300">±{createRange}% around current price</span>
+                  <span className="text-gray-400">Range</span>
+                  <span className="text-gray-700">±{createRange}% around current price</span>
                 </div>
                 <div className="flex justify-between text-xs">
-                  <span className="text-slate-500">Auto-rebalance</span>
-                  <span className="text-emerald-400">Enabled</span>
+                  <span className="text-gray-400">Auto-rebalance</span>
+                  <span className="text-emerald-600 font-semibold">Enabled</span>
                 </div>
               </div>
 
+              {createError && (
+                <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-xl px-4 py-3">{createError}</p>
+              )}
+
               <div className="flex gap-2">
-                <button type="submit"
-                  className="bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium px-5 py-2.5 rounded-lg transition-colors">
-                  {createMode === 'mint' ? 'Start strategy' : 'Register strategy'}
+                <button type="submit" disabled={formState === 'submitting'}
+                  className="bg-gray-900 hover:bg-gray-800 disabled:opacity-60 text-white text-sm font-semibold px-5 py-2.5 rounded-xl transition-colors">
+                  {formState === 'submitting' ? 'Starting…' : createMode === 'mint' ? 'Start strategy' : 'Register strategy'}
                 </button>
                 <button type="button" onClick={closeCreate}
-                  className="text-slate-400 hover:text-white text-sm px-4 py-2 rounded-lg border border-slate-700 transition-colors">
+                  className="text-gray-600 hover:text-gray-900 text-sm font-medium px-4 py-2.5 rounded-xl border border-gray-200 hover:border-gray-300 transition-colors">
                   Cancel
                 </button>
               </div>
@@ -586,87 +634,214 @@ export default function StrategyPage() {
         </div>
       )}
 
+      {/* ── Strategy list ──────────────────────────────────────────────────── */}
       {strategies.length === 0 ? (
-        <div className="text-center py-16 text-slate-500 text-sm">
-          No strategies yet.{' '}
-          <button className="text-blue-400 hover:text-blue-300" onClick={() => navigate('/wallet')}>
-            Configure a wallet first
-          </button>{' '}
-          then create one.
-        </div>
+        <OnboardingState hasWallet={user?.hasWallet ?? false} />
       ) : (
-        <div className="space-y-4">
-          {strategies.map(s => (
-            <div key={s.id} className="bg-slate-800/50 border border-slate-700/50 rounded-xl overflow-hidden">
-              {/* Strategy header */}
-              <div
-                className="flex items-center justify-between px-5 py-4 cursor-pointer hover:bg-slate-700/20 transition-colors"
-                onClick={() => expandStrategy(s.id, s.token0, s.token1)}
-              >
-                <div className="flex items-center gap-3">
-                  <StatusBadge status={s.status} />
-                  <span className="font-medium text-white">{s.name}</span>
-                  <span className="text-xs text-slate-400 font-mono">
-                    {tokenLabel(s.token0)}/{tokenLabel(s.token1)} · {feeLabel(s.fee)} · #{s.currentTokenId}
-                  </span>
-                </div>
-                <div className="flex items-center gap-2">
-                  {s.status === 'active' && (
-                    <button onClick={e => { e.stopPropagation(); handlePause(s.id) }}
-                      className="text-xs text-yellow-400 hover:text-yellow-300 px-2 py-1 rounded border border-yellow-500/30 hover:border-yellow-400/50 transition-colors">
-                      Pause
-                    </button>
-                  )}
-                  {s.status === 'paused' && (
-                    <button onClick={e => { e.stopPropagation(); handleResume(s.id) }}
-                      className="text-xs text-emerald-400 hover:text-emerald-300 px-2 py-1 rounded border border-emerald-500/30 hover:border-emerald-400/50 transition-colors">
-                      Resume
-                    </button>
-                  )}
-                  {s.status !== 'stopped' && (
-                    <button onClick={e => { e.stopPropagation(); handleStop(s.id) }}
-                      className="text-xs text-red-400 hover:text-red-300 px-2 py-1 rounded border border-red-500/30 hover:border-red-400/50 transition-colors">
-                      Stop
-                    </button>
-                  )}
-                  <span className="text-slate-500 text-sm">{expandedId === s.id ? '▲' : '▼'}</span>
-                </div>
-              </div>
+        <div className="space-y-3">
+          {strategies.map(s => {
+            const pos      = positions[s.id]
+            const pool     = poolStates[s.id]
+            const st       = stats[s.id]
+            const ethPrice = pool ? parseFloat(pool.price) : 0
+            const fees     = st ? computeNetFees(st, ethPrice, s.token0, s.token1) : null
+            const inRange  = pool && pos ? pool.tick >= pos.tickLower && pool.tick < pos.tickUpper : null
+            const tab      = tabMap[s.id] ?? 'overview'
 
-              {/* Expanded detail */}
-              {expandedId === s.id && (
-                <div className="border-t border-slate-700/50 px-5 py-4 space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-5 space-y-2">
-                      <h3 className="text-xs font-semibold uppercase tracking-widest text-slate-400 mb-3">Config</h3>
-                      <Row label="Range" value={`± ${(s.rangePercent * 100).toFixed(1)}%`} />
-                      <Row label="Slippage" value={`${(s.slippageTolerance * 100).toFixed(2)}%`} />
-                      <Row label="Poll interval" value={`${s.pollIntervalSeconds}s`} />
-                      <Row label="Started" value={new Date(s.createdAt).toLocaleDateString()} />
-                      {s.stoppedAt && <Row label="Stopped" value={new Date(s.stoppedAt).toLocaleDateString()} />}
+            return (
+              <div key={s.id} className="bg-white/60 backdrop-blur-sm rounded-2xl border border-white/80 shadow-sm overflow-hidden">
+                {/* Card header */}
+                <div
+                  className="flex items-center justify-between px-5 py-4 cursor-pointer hover:bg-white/30 transition-colors"
+                  onClick={() => expandStrategy(s.id)}
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <StatusBadge status={s.status} />
+                    <span className="font-semibold text-gray-900 truncate">{s.name}</span>
+                    <span className="text-xs text-gray-400 font-mono shrink-0 hidden sm:inline">
+                      {tokenLabel(s.token0)}/{tokenLabel(s.token1)} · {feeLabel(s.fee)} · #{s.currentTokenId}
+                    </span>
+                    {s.status !== 'stopped' && (
+                      <span className="text-xs text-gray-400 shrink-0 hidden md:inline">
+                        {daysRunning(s.createdAt)}d running
+                      </span>
+                    )}
+                    {s.status === 'active' && inRange !== null && (
+                      <span className={`hidden lg:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ${
+                        inRange
+                          ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                          : 'bg-red-50 text-red-700 border border-red-200'
+                      }`}>
+                        <span className={`w-1.5 h-1.5 rounded-full ${inRange ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`} />
+                        {inRange ? 'In Range' : 'Out of Range'}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0 ml-2" onClick={e => e.stopPropagation()}>
+                    {s.status === 'active' && (
+                      <button onClick={() => handlePause(s.id)}
+                        className="text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 hover:bg-amber-100 px-3 py-1.5 rounded-lg transition-colors">
+                        Pause
+                      </button>
+                    )}
+                    {s.status === 'paused' && (
+                      <button onClick={() => handleResume(s.id)}
+                        className="text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 px-3 py-1.5 rounded-lg transition-colors">
+                        Resume
+                      </button>
+                    )}
+                    {s.status !== 'stopped' && confirmStopId !== s.id && (
+                      <button onClick={() => setConfirmStopId(s.id)}
+                        className="text-xs font-semibold text-red-600 bg-red-50 border border-red-200 hover:bg-red-100 px-3 py-1.5 rounded-lg transition-colors">
+                        Stop
+                      </button>
+                    )}
+                    {confirmStopId === s.id && (
+                      <div className="flex items-center gap-1.5 bg-red-50 border border-red-200 rounded-lg px-3 py-1.5">
+                        <span className="text-xs text-red-700 font-medium">Stop permanently?</span>
+                        <button onClick={() => handleStop(s.id)}
+                          className="text-xs font-bold text-white bg-red-600 hover:bg-red-700 px-2 py-0.5 rounded transition-colors">
+                          Yes
+                        </button>
+                        <button onClick={() => setConfirmStopId(null)}
+                          className="text-xs font-medium text-red-600 hover:text-red-800 px-1">
+                          Cancel
+                        </button>
+                      </div>
+                    )}
+                    <svg
+                      className={`w-4 h-4 text-gray-400 transition-transform duration-200 ${expandedId === s.id ? 'rotate-180' : ''}`}
+                      fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <polyline points="6 9 12 15 18 9" />
+                    </svg>
+                  </div>
+                </div>
+
+                {/* Expanded */}
+                {expandedId === s.id && (
+                  <div className="border-t border-gray-100/60 px-5 py-4">
+                    {/* Tabs */}
+                    <div className="flex gap-1 bg-gray-200/50 rounded-xl p-1 w-fit mb-5">
+                      {(['overview', 'history'] as const).map(t => (
+                        <button key={t} onClick={() => setTab(s.id, t)}
+                          className={`px-4 py-1.5 rounded-lg text-xs font-semibold capitalize transition-colors ${
+                            tab === t ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                          }`}>
+                          {t}
+                        </button>
+                      ))}
                     </div>
 
-                    {stats[s.id] ? (
-                      <StatsCard stats={stats[s.id]} token0={s.token0} token1={s.token1} />
-                    ) : (
-                      <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-5 flex items-center justify-center text-slate-500 text-sm">
-                        Loading stats...
+                    {/* Overview tab */}
+                    {tab === 'overview' && (
+                      <div className="space-y-4">
+                        {/* Metric cards — shown once stats loaded */}
+                        {st && (
+                          <div className="grid grid-cols-3 gap-3">
+                            <MetricCard
+                              label="ETH Price"
+                              value={pool ? `$${Math.round(ethPrice).toLocaleString()}` : '—'}
+                              sub="USDC per WETH"
+                              accent="blue"
+                            />
+                            <MetricCard
+                              label="Net Fees"
+                              value={fees ? formatUsd(fees.netUsd) : '—'}
+                              sub={fees ? `${formatUsd(fees.feesUsd)} earned · ${formatUsd(fees.gasUsd)} gas` : undefined}
+                              accent={fees ? (fees.netUsd >= 0 ? 'green' : 'red') : undefined}
+                            />
+                            <MetricCard
+                              label="Time in Range"
+                              value={`${st.timeInRangePct.toFixed(1)}%`}
+                              sub={`${daysRunning(s.createdAt)}d · ${st.totalRebalances} rebalances`}
+                              accent={st.timeInRangePct >= 70 ? 'green' : st.timeInRangePct >= 40 ? 'amber' : 'red'}
+                            />
+                          </div>
+                        )}
+
+                        {/* Position + Config */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          {/* Position */}
+                          <div className="bg-white/40 border border-white/60 rounded-xl p-4">
+                            <div className="flex items-center justify-between mb-3">
+                              <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-400">Position</h3>
+                              {s.status === 'active' && inRange !== null && (
+                                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ${
+                                  inRange
+                                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                    : 'bg-red-50 text-red-700 border border-red-200'
+                                }`}>
+                                  <span className={`w-1.5 h-1.5 rounded-full ${inRange ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`} />
+                                  {inRange ? 'In Range' : 'Out of Range'}
+                                </span>
+                              )}
+                            </div>
+                            {s.status !== 'active' ? (
+                              <p className="text-xs text-gray-400 py-3">
+                                Live position data is only available for active strategies.
+                              </p>
+                            ) : pos && pool ? (
+                              <>
+                                <InfoRow label="Token ID"   value={`#${pos.tokenId}`} />
+                                <InfoRow label="Pool price" value={`$${Number(pool.price).toLocaleString('en-US', { maximumFractionDigits: 2 })}`} />
+                                <InfoRow label="Liquidity"  value={BigInt(pos.liquidity) > 0n ? 'Active' : 'Empty'} />
+                                <InfoRow label="Fee tier"   value={feeLabel(pos.fee)} />
+                                <PriceRangeBar
+                                  tick={pool.tick} tickLower={pos.tickLower} tickUpper={pos.tickUpper}
+                                  decimals0={pool.decimals0} decimals1={pool.decimals1}
+                                />
+                              </>
+                            ) : (
+                              <div className="flex items-center gap-2 text-gray-400 text-sm py-4">
+                                <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                                </svg>
+                                Loading…
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Config */}
+                          <div className="bg-white/40 border border-white/60 rounded-xl p-4">
+                            <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-3">Config</h3>
+                            <InfoRow label="Range"         value={`± ${(s.rangePercent * 100).toFixed(1)}%`} />
+                            <InfoRow label="Slippage"      value={`${(s.slippageTolerance * 100).toFixed(2)}%`} />
+                            <InfoRow label="Poll interval" value={`${s.pollIntervalSeconds}s`} />
+                            <InfoRow label="Started"       value={new Date(s.createdAt).toLocaleDateString()} />
+                            <InfoRow label="Running"       value={`${daysRunning(s.createdAt)} days`} />
+                            {s.stoppedAt && <InfoRow label="Stopped" value={new Date(s.stoppedAt).toLocaleDateString()} />}
+                            {st && st.totalRebalances >= 3 && st.avgRebalanceIntervalHours != null && (
+                              <InfoRow label="Avg rebalance" value={`${st.avgRebalanceIntervalHours.toFixed(1)}h`} />
+                            )}
+                            {st && (
+                              <>
+                                <InfoRow label={`Fees ${tokenLabel(s.token0)}`} value={formatRaw(st.feesCollectedToken0, tokenDecimals(s.token0))} />
+                                <InfoRow label={`Fees ${tokenLabel(s.token1)}`} value={formatRaw(st.feesCollectedToken1, tokenDecimals(s.token1))} />
+                                <InfoRow label="Gas spent" value={`${weiToEth(st.gasCostWei)} ETH`} />
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* History tab */}
+                    {tab === 'history' && (
+                      <div className="bg-white/40 border border-white/60 rounded-xl p-4">
+                        {rebalances[s.id] ? (
+                          <RebalanceTable events={rebalances[s.id]} token0={s.token0} token1={s.token1} />
+                        ) : (
+                          <p className="text-gray-400 text-sm text-center py-4">Loading…</p>
+                        )}
                       </div>
                     )}
                   </div>
-
-                  <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-5">
-                    <h3 className="text-xs font-semibold uppercase tracking-widest text-slate-400 mb-4">Rebalance History</h3>
-                    {rebalances[s.id] ? (
-                      <RebalanceTable events={rebalances[s.id]} token0={s.token0} token1={s.token1} />
-                    ) : (
-                      <p className="text-slate-500 text-sm text-center py-4">Loading...</p>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-          ))}
+                )}
+              </div>
+            )
+          })}
         </div>
       )}
     </div>

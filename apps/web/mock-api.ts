@@ -114,6 +114,14 @@ export function mockApiPlugin(): Plugin {
 
         if (url === '/api/v1/strategies' && method === 'GET') return json(res, MOCK_STRATEGIES)
         if (url === '/api/v1/strategies' && method === 'POST') return json(res, MOCK_STRATEGIES[0])
+        if (url === '/api/v1/strategies/start' && method === 'POST') return json(res, {
+          tokenId: '789012',
+          txHashes: [
+            '0xaaa111bbb222ccc333ddd444eee555fff666aaa111bbb222ccc333ddd444eee5',
+            '0xbbb222ccc333ddd444eee555fff666aaa111bbb222ccc333ddd444eee555fff6',
+            '0xccc333ddd444eee555fff666aaa111bbb222ccc333ddd444eee555fff666aaa1',
+          ],
+        })
         if (url.match(/^\/api\/v1\/strategies\/\d+\/stats$/)) return json(res, MOCK_STATS)
         if (url.match(/^\/api\/v1\/strategies\/\d+\/rebalances$/)) return json(res, MOCK_REBALANCES)
         if (url.match(/^\/api\/v1\/strategies\/\d+\/pause$/) && method === 'PATCH') return json(res, {})

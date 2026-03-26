@@ -43,6 +43,12 @@ export interface RebalanceResult {
   feesCollected?: FeesCollected
   /** Total gas cost across all transactions, in wei */
   gasUsedWei?: string
+  /** Raw token amounts retrieved from old position (liquidity + fees) before rebalance */
+  positionToken0Start?: string
+  positionToken1Start?: string
+  /** Raw token amounts deposited into new position after rebalance */
+  positionToken0End?: string
+  positionToken1End?: string
 }
 
 export interface MintRequest {
@@ -152,6 +158,10 @@ export interface RebalanceEventDto {
   feesCollectedToken0: string | null
   feesCollectedToken1: string | null
   gasCostWei: string | null
+  positionToken0Start: string | null
+  positionToken1Start: string | null
+  positionToken0End: string | null
+  positionToken1End: string | null
   errorMessage: string | null
   triggeredAt: string
   completedAt: string | null

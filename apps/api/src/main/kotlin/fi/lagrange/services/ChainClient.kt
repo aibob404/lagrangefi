@@ -45,6 +45,10 @@ data class RebalanceResponse(
     val error: String? = null,
     val feesCollected: FeesCollectedResponse? = null,
     val gasUsedWei: String? = null,
+    val positionToken0Start: String? = null,
+    val positionToken1Start: String? = null,
+    val positionToken0End: String? = null,
+    val positionToken1End: String? = null,
 )
 
 @Serializable

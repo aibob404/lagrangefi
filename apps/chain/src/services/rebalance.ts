@@ -179,6 +179,11 @@ export async function rebalance(req: RebalanceRequest): Promise<RebalanceResult>
   txHashes.push(decreaseTx)
   receipts.push(decreaseReceipt)
 
+  // From this point on, liquidity has been removed from the pool and tokens are owed to this
+  // position in the NonfungiblePositionManager. If anything below fails, we must collect those
+  // tokens back to the wallet so they are never left stranded in the contract.
+  try {
+
   // 3. Collect all tokens (includes accrued LP fees + withdrawn liquidity)
   const collectTx = await walletClient.writeContract({
     address: POSITION_MANAGER,
@@ -232,11 +237,13 @@ export async function rebalance(req: RebalanceRequest): Promise<RebalanceResult>
     }),
   ])
 
-  // 6. Fetch balances after collection, then swap to correct ratio for new range
+  // 6. Fetch balances after collection — this is the start position value (liquidity + fees)
   const [balance0, balance1] = await Promise.all([
     publicClient.readContract({ address: token0, abi: ERC20_ABI, functionName: 'balanceOf', args: [account.address] }),
     publicClient.readContract({ address: token1, abi: ERC20_ABI, functionName: 'balanceOf', args: [account.address] }),
   ])
+  const positionToken0Start = balance0.toString()
+  const positionToken1Start = balance1.toString()
 
   const swap = calculateSwapAmount({
     balance0,
@@ -310,7 +317,50 @@ export async function rebalance(req: RebalanceRequest): Promise<RebalanceResult>
   )
   const newTokenId = transferLog?.topics[3] ? BigInt(transferLog.topics[3]).toString() : undefined
 
+  // Parse IncreaseLiquidity event to get actual amounts deposited into new position
+  // keccak256("IncreaseLiquidity(uint256,uint128,uint256,uint256)")
+  const INCREASE_LIQUIDITY_TOPIC = '0x3067048beee31b25b2f1681f88dac838c8bba36af25bfb2b7cf7473a5847e35f'
+  const mintLog = mintReceipt.logs.find(
+    (log) =>
+      log.address.toLowerCase() === POSITION_MANAGER.toLowerCase() &&
+      log.topics[0]?.toLowerCase() === INCREASE_LIQUIDITY_TOPIC.toLowerCase()
+  )
+  let positionToken0End: string | undefined
+  let positionToken1End: string | undefined
+  if (mintLog?.data && mintLog.data !== '0x') {
+    const data = mintLog.data.slice(2)
+    // IncreaseLiquidity(tokenId, liquidity, amount0, amount1) — liquidity in topics[2], amounts in data
+    positionToken0End = BigInt('0x' + data.slice(0, 64)).toString()
+    positionToken1End = BigInt('0x' + data.slice(64, 128)).toString()
+  }
+
   const gasUsedWei = totalGasWei(receipts).toString()
 
-  return { success: true, txHashes, newTokenId, feesCollected, gasUsedWei }
+  return { success: true, txHashes, newTokenId, feesCollected, gasUsedWei, positionToken0Start, positionToken1Start, positionToken0End, positionToken1End }
+
+  } catch (err) {
+    // Recovery: collect tokens back to wallet so they are not stranded in the position manager
+    try {
+      const recoverTx = await walletClient.writeContract({
+        address: POSITION_MANAGER,
+        abi: POSITION_MANAGER_ABI,
+        functionName: 'collect',
+        args: [{
+          tokenId,
+          recipient: account.address,
+          amount0Max: MAX_UINT128,
+          amount1Max: MAX_UINT128,
+        }],
+      })
+      await publicClient.waitForTransactionReceipt({ hash: recoverTx })
+      txHashes.push(recoverTx)
+    } catch (collectErr) {
+      // Recovery failed — include both errors in the response
+      const msg = err instanceof Error ? err.message : String(err)
+      const collectMsg = collectErr instanceof Error ? collectErr.message : String(collectErr)
+      return { success: false, txHashes, error: `${msg}; recovery collect also failed: ${collectMsg}` }
+    }
+    const msg = err instanceof Error ? err.message : String(err)
+    return { success: false, txHashes, error: `${msg}; tokens recovered to wallet` }
+  }
 }

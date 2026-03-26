@@ -60,6 +60,10 @@ export interface RebalanceEvent {
   feesCollectedToken0: string | null
   feesCollectedToken1: string | null
   gasCostWei: string | null
+  positionToken0Start: string | null
+  positionToken1Start: string | null
+  positionToken0End: string | null
+  positionToken1End: string | null
   errorMessage: string | null
   triggeredAt: string
   completedAt: string | null

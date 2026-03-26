@@ -67,50 +67,69 @@ class UniswapStrategy(
             } get RebalanceEvents.id
         }
 
-        val result = chainClient.rebalance(
-            idempotencyKey = idempotencyKey,
-            tokenId = tokenId,
-            newTickLower = newTickLower,
-            newTickUpper = newTickUpper,
-            slippageTolerance = strategy.slippageTolerance,
-            walletPrivateKey = walletPhrase,
-        )
+        try {
+            val result = chainClient.rebalance(
+                idempotencyKey = idempotencyKey,
+                tokenId = tokenId,
+                newTickLower = newTickLower,
+                newTickUpper = newTickUpper,
+                slippageTolerance = strategy.slippageTolerance,
+                walletPrivateKey = walletPhrase,
+            )
 
-        if (result.success) {
-            log.info("Strategy=${strategy.id} rebalance succeeded. newTokenId=${result.newTokenId}")
-            telegram.sendAlert("[${strategy.name}] Rebalance successful! New tokenId=${result.newTokenId}")
+            if (result.success) {
+                log.info("Strategy=${strategy.id} rebalance succeeded. newTokenId=${result.newTokenId}")
+                telegram.sendAlert("[${strategy.name}] Rebalance successful! New tokenId=${result.newTokenId}")
 
-            val fees0 = result.feesCollected?.amount0 ?: "0"
-            val fees1 = result.feesCollected?.amount1 ?: "0"
-            val gasWei = result.gasUsedWei ?: "0"
+                val fees0 = result.feesCollected?.amount0 ?: "0"
+                val fees1 = result.feesCollected?.amount1 ?: "0"
+                val gasWei = result.gasUsedWei ?: "0"
 
-            transaction {
-                RebalanceEvents.update({ RebalanceEvents.id eq eventId }) {
-                    it[status] = "success"
-                    it[newTokenId] = result.newTokenId
-                    it[txHashes] = Json.encodeToString(result.txHashes)
-                    it[feesCollectedToken0] = fees0
-                    it[feesCollectedToken1] = fees1
-                    it[gasCostWei] = gasWei
-                    it[completedAt] = Clock.System.now()
+                transaction {
+                    RebalanceEvents.update({ RebalanceEvents.id eq eventId }) {
+                        it[status] = "success"
+                        it[newTokenId] = result.newTokenId
+                        it[txHashes] = Json.encodeToString(result.txHashes)
+                        it[feesCollectedToken0] = fees0
+                        it[feesCollectedToken1] = fees1
+                        it[gasCostWei] = gasWei
+                        it[positionToken0Start] = result.positionToken0Start
+                        it[positionToken1Start] = result.positionToken1Start
+                        it[positionToken0End] = result.positionToken0End
+                        it[positionToken1End] = result.positionToken1End
+                        it[completedAt] = Clock.System.now()
+                    }
+                }
+
+                result.newTokenId?.let { newId ->
+                    strategyService.updateTokenId(strategy.id, newId)
+                }
+                strategyService.recordRebalanceSuccess(strategy.id, fees0, fees1, gasWei)
+            } else {
+                log.error("Strategy=${strategy.id} rebalance failed: ${result.error}")
+                telegram.sendAlert("[${strategy.name}] Rebalance FAILED: ${result.error}")
+
+                transaction {
+                    RebalanceEvents.update({ RebalanceEvents.id eq eventId }) {
+                        it[status] = "failed"
+                        it[errorMessage] = result.error
+                        it[txHashes] = result.txHashes.takeIf { it.isNotEmpty() }?.let { Json.encodeToString(it) }
+                        it[completedAt] = Clock.System.now()
+                    }
                 }
             }
-
-            result.newTokenId?.let { newId ->
-                strategyService.updateTokenId(strategy.id, newId)
-            }
-            strategyService.recordRebalanceSuccess(strategy.id, fees0, fees1, gasWei)
-        } else {
-            log.error("Strategy=${strategy.id} rebalance failed: ${result.error}")
-            telegram.sendAlert("[${strategy.name}] Rebalance FAILED: ${result.error}")
+        } catch (e: Exception) {
+            log.error("Strategy=${strategy.id} rebalance threw an exception", e)
+            telegram.sendAlert("[${strategy.name}] Rebalance ERROR: ${e.message}")
 
             transaction {
                 RebalanceEvents.update({ RebalanceEvents.id eq eventId }) {
                     it[status] = "failed"
-                    it[errorMessage] = result.error
+                    it[errorMessage] = e.message
                     it[completedAt] = Clock.System.now()
                 }
             }
+            throw e
         }
     }
 

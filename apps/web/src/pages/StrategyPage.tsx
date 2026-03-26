@@ -30,6 +30,16 @@ function feeLabel(fee: number) {
 function shortHash(h: string) {
   return h.slice(0, 8) + '...' + h.slice(-6)
 }
+function tokenDecimals(addr: string): number {
+  const label = TOKEN_LABELS[addr.toLowerCase()] ?? ''
+  return label.includes('USDC') ? 6 : 18
+}
+function tickToPrice(tick: number, decimals0: number, decimals1: number): number {
+  return Math.pow(1.0001, tick) * Math.pow(10, decimals0 - decimals1)
+}
+function formatPrice(price: number): string {
+  return price.toLocaleString('en-US', { maximumFractionDigits: 2 })
+}
 function weiToEth(wei: string): string {
   const n = BigInt(wei)
   const eth = Number(n) / 1e18
@@ -89,7 +99,9 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
   )
 }
 
-function RebalanceTable({ events }: { events: RebalanceEvent[] }) {
+function RebalanceTable({ events, token0, token1 }: { events: RebalanceEvent[]; token0: string; token1: string }) {
+  const dec0 = tokenDecimals(token0)
+  const dec1 = tokenDecimals(token1)
   if (events.length === 0) return <p className="text-slate-500 text-sm py-4 text-center">No rebalances yet</p>
 
   return (
@@ -100,7 +112,10 @@ function RebalanceTable({ events }: { events: RebalanceEvent[] }) {
             <th className="text-left pb-2 font-medium">Time</th>
             <th className="text-left pb-2 font-medium">Status</th>
             <th className="text-left pb-2 font-medium">New Range</th>
-            <th className="text-left pb-2 font-medium">Fees (t0/t1)</th>
+            <th className="text-left pb-2 font-medium">Fees collected</th>
+            <th className="text-left pb-2 font-medium">Position in</th>
+            <th className="text-left pb-2 font-medium">Position out</th>
+            <th className="text-left pb-2 font-medium">Gas (ETH)</th>
             <th className="text-left pb-2 font-medium">Tx</th>
           </tr>
         </thead>
@@ -116,10 +131,27 @@ function RebalanceTable({ events }: { events: RebalanceEvent[] }) {
                 }`}>{r.status}</span>
               </td>
               <td className="py-2 text-slate-300 font-mono text-xs">
-                {r.newTickLower != null ? `${r.newTickLower} → ${r.newTickUpper}` : '—'}
+                {r.newTickLower != null
+                  ? `$${formatPrice(tickToPrice(r.newTickLower, dec0, dec1))} → $${formatPrice(tickToPrice(r.newTickUpper!, dec0, dec1))}`
+                  : '—'}
               </td>
               <td className="py-2 text-slate-400 font-mono text-xs">
-                {r.feesCollectedToken0 != null ? `${r.feesCollectedToken0} / ${r.feesCollectedToken1}` : '—'}
+                {r.feesCollectedToken0 != null
+                  ? `${formatRawAmount(r.feesCollectedToken0, dec0)} ${tokenLabel(token0)} / ${formatRawAmount(r.feesCollectedToken1!, dec1)} ${tokenLabel(token1)}`
+                  : '—'}
+              </td>
+              <td className="py-2 text-slate-400 font-mono text-xs">
+                {r.positionToken0Start != null
+                  ? `${formatRawAmount(r.positionToken0Start, dec0)} ${tokenLabel(token0)} + ${formatRawAmount(r.positionToken1Start!, dec1)} ${tokenLabel(token1)}`
+                  : '—'}
+              </td>
+              <td className="py-2 text-slate-400 font-mono text-xs">
+                {r.positionToken0End != null
+                  ? `${formatRawAmount(r.positionToken0End, dec0)} ${tokenLabel(token0)} + ${formatRawAmount(r.positionToken1End!, dec1)} ${tokenLabel(token1)}`
+                  : '—'}
+              </td>
+              <td className="py-2 text-slate-400 font-mono text-xs">
+                {r.gasCostWei != null ? weiToEth(r.gasCostWei) : '—'}
               </td>
               <td className="py-2 text-slate-400 font-mono text-xs">
                 {r.txHashes
@@ -626,7 +658,7 @@ export default function StrategyPage() {
                   <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-5">
                     <h3 className="text-xs font-semibold uppercase tracking-widest text-slate-400 mb-4">Rebalance History</h3>
                     {rebalances[s.id] ? (
-                      <RebalanceTable events={rebalances[s.id]} />
+                      <RebalanceTable events={rebalances[s.id]} token0={s.token0} token1={s.token1} />
                     ) : (
                       <p className="text-slate-500 text-sm text-center py-4">Loading...</p>
                     )}

@@ -72,7 +72,7 @@ const POSITION_MANAGER_ABI = [
 const DEADLINE_BUFFER = 300n
 
 export async function mintPosition(req: MintRequest): Promise<MintResult> {
-  const walletClient = createWalletClientForKey()
+  const walletClient = createWalletClientForKey(req.walletPrivateKey)
   const account = walletClient.account!
   const txHashes: string[] = []
   const deadline = BigInt(Math.floor(Date.now() / 1000)) + DEADLINE_BUFFER

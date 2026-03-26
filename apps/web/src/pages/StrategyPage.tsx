@@ -1,12 +1,20 @@
 import { useState, useEffect, useRef, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
-  fetchStrategies, createStrategy, pauseStrategy, resumeStrategy, stopStrategy,
+  fetchStrategies, startStrategy, createStrategy,
+  pauseStrategy, resumeStrategy, stopStrategy,
   fetchStrategyStats, fetchStrategyRebalances, fetchWalletBalances,
 } from '../api'
 import type { Strategy, StrategyStats, RebalanceEvent } from '../types'
 
 interface WalletBalances { address: string; eth: string; usdc: string }
+
+const FEE_TIERS = [
+  { value: 100, label: '0.01%' },
+  { value: 500, label: '0.05%' },
+  { value: 3000, label: '0.30%' },
+  { value: 10000, label: '1.00%' },
+]
 
 const TOKEN_LABELS: Record<string, string> = {
   '0x82af49447d8a07e3bd95bd0d56f35241523fbab1': 'WETH',
@@ -140,13 +148,21 @@ export default function StrategyPage() {
 
   // Create form
   const [showCreate, setShowCreate] = useState(false)
+  const [createMode, setCreateMode] = useState<'mint' | 'register'>('mint')
+  const [formState, setFormState] = useState<'form' | 'submitting' | 'success' | 'error'>('form')
+  // mint mode fields
   const [createName, setCreateName] = useState('')
+  const [ethAmount, setEthAmount] = useState('')
+  const [usdcAmount, setUsdcAmount] = useState('')
+  const [feeTier, setFeeTier] = useState(500)
+  // register mode fields
   const [createTokenId, setCreateTokenId] = useState('')
+  // shared
   const [createRange, setCreateRange] = useState(5)
   const [createSlippage, setCreateSlippage] = useState('0.5')
   const [createInterval, setCreateInterval] = useState('60')
   const [createError, setCreateError] = useState<string | null>(null)
-  const [creating, setCreating] = useState(false)
+  const [successData, setSuccessData] = useState<{ tokenId: string; txHashes: string[] } | null>(null)
   const balancesLoadedRef = useRef(false)
 
   useEffect(() => {
@@ -175,7 +191,17 @@ export default function StrategyPage() {
 
   function openCreate() {
     setShowCreate(true)
+    setFormState('form')
+    setCreateError(null)
+    setSuccessData(null)
     loadBalances()
+  }
+
+  function closeCreate() {
+    setShowCreate(false)
+    setFormState('form')
+    setCreateError(null)
+    setSuccessData(null)
   }
 
   async function expandStrategy(id: number, _token0: string, _token1: string) {
@@ -213,24 +239,37 @@ export default function StrategyPage() {
   async function handleCreate(e: FormEvent) {
     e.preventDefault()
     setCreateError(null)
-    setCreating(true)
+    setFormState('submitting')
     try {
-      await createStrategy({
-        name: createName,
-        tokenId: createTokenId,
-        rangePercent: createRange / 100,
-        slippageTolerance: parseFloat(createSlippage) / 100,
-        pollIntervalSeconds: parseInt(createInterval, 10),
-      })
-      setShowCreate(false)
-      setCreateName(''); setCreateTokenId(''); setCreateRange(5)
-      setCreateSlippage('0.5'); setCreateInterval('60')
-      balancesLoadedRef.current = false
-      load()
+      if (createMode === 'mint') {
+        const result = await startStrategy({
+          name: createName,
+          ethAmount,
+          usdcAmount,
+          feeTier,
+          rangePercent: createRange / 100,
+          slippageTolerance: parseFloat(createSlippage) / 100,
+          pollIntervalSeconds: parseInt(createInterval, 10),
+        })
+        setSuccessData(result)
+        setFormState('success')
+        balancesLoadedRef.current = false
+        load()
+      } else {
+        await createStrategy({
+          name: createName,
+          tokenId: createTokenId,
+          rangePercent: createRange / 100,
+          slippageTolerance: parseFloat(createSlippage) / 100,
+          pollIntervalSeconds: parseInt(createInterval, 10),
+        })
+        closeCreate()
+        balancesLoadedRef.current = false
+        load()
+      }
     } catch (err: unknown) {
       setCreateError(err instanceof Error ? err.message : 'Failed to create strategy')
-    } finally {
-      setCreating(false)
+      setFormState('error')
     }
   }
 
@@ -257,124 +296,262 @@ export default function StrategyPage() {
       )}
 
       {showCreate && (
-        <form onSubmit={handleCreate} className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-6 mb-6 space-y-5">
-          <div className="flex items-center justify-between">
+        <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-6 mb-6">
+
+          {/* Header */}
+          <div className="flex items-center justify-between mb-5">
             <div>
-              <h2 className="text-base font-semibold text-white">Create strategy</h2>
-              <p className="text-xs text-slate-400 mt-0.5">Register an existing Uniswap v3 position for auto-rebalancing</p>
+              <h2 className="text-base font-semibold text-white">New strategy</h2>
+              <p className="text-xs text-slate-400 mt-0.5">
+                {createMode === 'mint' ? 'Create a new WETH/USDC position and start auto-rebalancing' : 'Register an existing Uniswap v3 position'}
+              </p>
             </div>
-            <button type="button" onClick={() => setShowCreate(false)} className="text-slate-400 hover:text-slate-200 transition-colors">
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            {formState !== 'submitting' && (
+              <button type="button" onClick={closeCreate} className="text-slate-400 hover:text-slate-200 transition-colors">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            )}
+          </div>
+
+          {/* Success state */}
+          {formState === 'success' && successData && (
+            <div className="text-center space-y-4">
+              <div className="w-14 h-14 rounded-full bg-emerald-500/20 flex items-center justify-center mx-auto">
+                <svg className="w-7 h-7 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                </svg>
+              </div>
+              <div>
+                <p className="text-white font-semibold">Strategy started!</p>
+                <p className="text-slate-400 text-sm mt-1">
+                  Position <span className="text-white font-mono">#{successData.tokenId}</span> is now active and will auto-rebalance.
+                </p>
+              </div>
+              {successData.txHashes.length > 0 && (
+                <div className="bg-slate-900/50 border border-slate-700/50 rounded-lg p-3 text-left space-y-1.5">
+                  <p className="text-xs text-slate-500 uppercase tracking-wider font-medium mb-2">Transactions</p>
+                  {successData.txHashes.map((h, i) => (
+                    <div key={h} className="flex items-center justify-between">
+                      <span className="text-xs text-slate-500">{['Wrap', 'Swap', 'Mint'][i] ?? `Tx ${i + 1}`}</span>
+                      <a href={`https://arbiscan.io/tx/${h}`} target="_blank" rel="noopener noreferrer"
+                        className="text-xs text-blue-400 hover:text-blue-300 font-mono underline">
+                        {h.slice(0, 8)}…{h.slice(-6)}
+                      </a>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <button onClick={closeCreate}
+                className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-xl transition-colors text-sm">
+                Done
+              </button>
+            </div>
+          )}
+
+          {/* Submitting state */}
+          {formState === 'submitting' && (
+            <div className="text-center space-y-4 py-6">
+              <svg className="w-10 h-10 text-blue-400 animate-spin mx-auto" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
               </svg>
-            </button>
-          </div>
-
-          {/* Wallet balances */}
-          {walletBalances && (
-            <div className="bg-slate-900/50 border border-slate-700/50 rounded-lg px-4 py-3 flex items-center gap-6">
-              <span className="text-xs font-semibold uppercase tracking-widest text-slate-500">Wallet</span>
-              <div className="flex items-center gap-1.5">
-                <span className="text-xs text-slate-400">ETH</span>
-                <span className="text-sm font-mono text-white">{Number(walletBalances.eth).toFixed(4)}</span>
+              <div>
+                <p className="text-white font-medium">Creating position on-chain…</p>
+                <p className="text-slate-400 text-xs mt-1">This may take 1–2 minutes. Do not close this page.</p>
               </div>
-              <div className="flex items-center gap-1.5">
-                <span className="text-xs text-slate-400">USDC</span>
-                <span className="text-sm font-mono text-white">{Number(walletBalances.usdc).toLocaleString('en-US', { maximumFractionDigits: 2 })}</span>
-              </div>
-              <span className="text-xs text-slate-600 font-mono ml-auto">
-                {walletBalances.address.slice(0, 6)}…{walletBalances.address.slice(-4)}
-              </span>
             </div>
           )}
 
-          {createError && (
-            <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-sm rounded-lg px-3 py-2">{createError}</div>
+          {/* Form state (and error retry) */}
+          {(formState === 'form' || formState === 'error') && (
+            <form onSubmit={handleCreate} className="space-y-5">
+
+              {/* Mode toggle */}
+              <div className="flex gap-1 bg-slate-900/50 rounded-lg p-1">
+                <button type="button" onClick={() => setCreateMode('mint')}
+                  className={`flex-1 text-xs font-medium py-1.5 rounded-md transition-colors ${createMode === 'mint' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>
+                  Create new position
+                </button>
+                <button type="button" onClick={() => setCreateMode('register')}
+                  className={`flex-1 text-xs font-medium py-1.5 rounded-md transition-colors ${createMode === 'register' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>
+                  Register existing
+                </button>
+              </div>
+
+              {/* Wallet balances */}
+              {walletBalances && (
+                <div className="bg-slate-900/50 border border-slate-700/50 rounded-lg px-4 py-3 flex items-center gap-6">
+                  <span className="text-xs font-semibold uppercase tracking-widest text-slate-500">Wallet</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs text-slate-400">ETH</span>
+                    <span className="text-sm font-mono text-white">{Number(walletBalances.eth).toFixed(4)}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs text-slate-400">USDC</span>
+                    <span className="text-sm font-mono text-white">{Number(walletBalances.usdc).toLocaleString('en-US', { maximumFractionDigits: 2 })}</span>
+                  </div>
+                  <span className="text-xs text-slate-600 font-mono ml-auto">
+                    {walletBalances.address.slice(0, 6)}…{walletBalances.address.slice(-4)}
+                  </span>
+                </div>
+              )}
+
+              {createError && (
+                <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-sm rounded-lg px-3 py-2">{createError}</div>
+              )}
+
+              {/* Strategy name */}
+              <div>
+                <label className="block text-xs text-slate-400 mb-1">Strategy name</label>
+                <input
+                  className="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 transition-colors"
+                  value={createName} onChange={e => setCreateName(e.target.value)} placeholder="My ETH/USDC strategy" required
+                />
+              </div>
+
+              {createMode === 'mint' ? (
+                <>
+                  {/* ETH + USDC amounts */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <div className="flex justify-between items-baseline mb-1.5">
+                        <label className="text-xs font-medium text-slate-400">ETH amount</label>
+                        {walletBalances && (
+                          <button type="button" onClick={() => setEthAmount(walletBalances.eth)}
+                            className="text-xs text-blue-400 hover:text-blue-300 font-mono">
+                            Max {Number(walletBalances.eth).toFixed(4)}
+                          </button>
+                        )}
+                      </div>
+                      <div className="relative">
+                        <input type="number" min="0" step="0.001" placeholder="0.0" value={ethAmount}
+                          onChange={e => setEthAmount(e.target.value)}
+                          className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 pr-12" />
+                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400 font-medium">ETH</span>
+                      </div>
+                    </div>
+                    <div>
+                      <div className="flex justify-between items-baseline mb-1.5">
+                        <label className="text-xs font-medium text-slate-400">USDC amount</label>
+                        {walletBalances && (
+                          <button type="button" onClick={() => setUsdcAmount(Number(walletBalances.usdc).toFixed(2))}
+                            className="text-xs text-blue-400 hover:text-blue-300 font-mono">
+                            Max {Number(walletBalances.usdc).toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                          </button>
+                        )}
+                      </div>
+                      <div className="relative">
+                        <input type="number" min="0" step="1" placeholder="0.0" value={usdcAmount}
+                          onChange={e => setUsdcAmount(e.target.value)}
+                          className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 pr-14" />
+                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400 font-medium">USDC</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Fee tier */}
+                  <div>
+                    <label className="block text-xs font-medium text-slate-400 mb-1.5">Fee tier</label>
+                    <div className="grid grid-cols-4 gap-2">
+                      {FEE_TIERS.map(ft => (
+                        <button key={ft.value} type="button" onClick={() => setFeeTier(ft.value)}
+                          className={`py-2 rounded-lg text-xs font-medium border transition-colors ${
+                            feeTier === ft.value
+                              ? 'bg-blue-600 border-blue-500 text-white'
+                              : 'bg-slate-800 border-slate-600 text-slate-400 hover:border-slate-500 hover:text-slate-300'
+                          }`}>
+                          {ft.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              ) : (
+                /* Register mode: token ID */
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">Position token ID (NFT)</label>
+                  <input
+                    className="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 font-mono focus:outline-none focus:border-blue-500 transition-colors"
+                    value={createTokenId} onChange={e => setCreateTokenId(e.target.value)} placeholder="123456" required={createMode === 'register'}
+                  />
+                </div>
+              )}
+
+              {/* Range slider */}
+              <div>
+                <label className="block text-xs text-slate-400 mb-1.5">
+                  {createMode === 'mint' ? 'Price range' : 'Rebalance trigger range'} — <span className="text-white font-medium">±{createRange}%</span> from current price
+                </label>
+                <input type="range" min="1" max="20" step="1" value={createRange}
+                  onChange={e => setCreateRange(Number(e.target.value))}
+                  className="w-full accent-blue-500" />
+                <div className="flex justify-between text-xs text-slate-500 mt-1">
+                  <span>1% (tight)</span>
+                  <span>20% (wide)</span>
+                </div>
+              </div>
+
+              {/* Advanced: slippage + poll interval */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">Slippage (%)</label>
+                  <input className="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors"
+                    type="number" step="0.01" min="0.01" max="5" value={createSlippage}
+                    onChange={e => setCreateSlippage(e.target.value)} required />
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">Poll interval (s)</label>
+                  <input className="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors"
+                    type="number" min="30" max="3600" value={createInterval}
+                    onChange={e => setCreateInterval(e.target.value)} required />
+                </div>
+              </div>
+
+              {/* Summary */}
+              <div className="bg-slate-900/50 border border-slate-700/50 rounded-lg p-4 space-y-2">
+                <p className="text-xs font-medium text-slate-400 uppercase tracking-wider mb-2">Summary</p>
+                {createMode === 'mint' ? (
+                  <>
+                    <div className="flex justify-between text-xs">
+                      <span className="text-slate-500">Deposit</span>
+                      <span className="text-slate-300 font-mono">{ethAmount || '0'} ETH + {usdcAmount || '0'} USDC</span>
+                    </div>
+                    <div className="flex justify-between text-xs">
+                      <span className="text-slate-500">Pool</span>
+                      <span className="text-slate-300">WETH / USDC · {FEE_TIERS.find(f => f.value === feeTier)?.label}</span>
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex justify-between text-xs">
+                    <span className="text-slate-500">Position NFT</span>
+                    <span className="text-slate-300 font-mono">#{createTokenId || '—'}</span>
+                  </div>
+                )}
+                <div className="flex justify-between text-xs">
+                  <span className="text-slate-500">Range</span>
+                  <span className="text-slate-300">±{createRange}% around current price</span>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span className="text-slate-500">Auto-rebalance</span>
+                  <span className="text-emerald-400">Enabled</span>
+                </div>
+              </div>
+
+              <div className="flex gap-2">
+                <button type="submit"
+                  className="bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium px-5 py-2.5 rounded-lg transition-colors">
+                  {createMode === 'mint' ? 'Start strategy' : 'Register strategy'}
+                </button>
+                <button type="button" onClick={closeCreate}
+                  className="text-slate-400 hover:text-white text-sm px-4 py-2 rounded-lg border border-slate-700 transition-colors">
+                  Cancel
+                </button>
+              </div>
+            </form>
           )}
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs text-slate-400 mb-1">Strategy name</label>
-              <input
-                className="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 transition-colors"
-                value={createName} onChange={e => setCreateName(e.target.value)} placeholder="My ETH/USDC strategy" required
-              />
-            </div>
-            <div>
-              <label className="block text-xs text-slate-400 mb-1">Position token ID (NFT)</label>
-              <input
-                className="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 font-mono focus:outline-none focus:border-blue-500 transition-colors"
-                value={createTokenId} onChange={e => setCreateTokenId(e.target.value)} placeholder="123456" required
-              />
-            </div>
-            <div>
-              <label className="block text-xs text-slate-400 mb-1">Slippage tolerance (%)</label>
-              <input
-                className="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 transition-colors"
-                type="number" step="0.01" min="0.01" max="5" value={createSlippage}
-                onChange={e => setCreateSlippage(e.target.value)} required
-              />
-            </div>
-            <div>
-              <label className="block text-xs text-slate-400 mb-1">Poll interval (seconds)</label>
-              <input
-                className="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 transition-colors"
-                type="number" min="30" max="3600" value={createInterval}
-                onChange={e => setCreateInterval(e.target.value)} required
-              />
-            </div>
-          </div>
-
-          {/* Range slider */}
-          <div>
-            <label className="block text-xs text-slate-400 mb-1.5">
-              Rebalance trigger range — <span className="text-white font-medium">±{createRange}%</span> from current price
-            </label>
-            <input
-              type="range" min="1" max="20" step="1" value={createRange}
-              onChange={e => setCreateRange(Number(e.target.value))}
-              className="w-full accent-blue-500"
-            />
-            <div className="flex justify-between text-xs text-slate-500 mt-1">
-              <span>1% (tight)</span>
-              <span>20% (wide)</span>
-            </div>
-          </div>
-
-          {/* Summary */}
-          <div className="bg-slate-900/50 border border-slate-700/50 rounded-lg p-4 space-y-2">
-            <p className="text-xs font-medium text-slate-400 uppercase tracking-wider mb-2">Summary</p>
-            <div className="flex justify-between text-xs">
-              <span className="text-slate-500">Position NFT</span>
-              <span className="text-slate-300 font-mono">#{createTokenId || '—'}</span>
-            </div>
-            <div className="flex justify-between text-xs">
-              <span className="text-slate-500">Trigger range</span>
-              <span className="text-slate-300">±{createRange}% from current price</span>
-            </div>
-            <div className="flex justify-between text-xs">
-              <span className="text-slate-500">Slippage</span>
-              <span className="text-slate-300">{createSlippage}%</span>
-            </div>
-            <div className="flex justify-between text-xs">
-              <span className="text-slate-500">Poll every</span>
-              <span className="text-slate-300">{createInterval}s</span>
-            </div>
-            <div className="flex justify-between text-xs">
-              <span className="text-slate-500">Auto-rebalance</span>
-              <span className="text-emerald-400">Enabled</span>
-            </div>
-          </div>
-
-          <div className="flex gap-2">
-            <button type="submit" disabled={creating} className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm font-medium px-5 py-2.5 rounded-lg transition-colors">
-              {creating ? 'Creating...' : 'Create strategy'}
-            </button>
-            <button type="button" onClick={() => setShowCreate(false)} className="text-slate-400 hover:text-white text-sm px-4 py-2 rounded-lg border border-slate-700 transition-colors">
-              Cancel
-            </button>
-          </div>
-        </form>
+        </div>
       )}
 
       {strategies.length === 0 ? (

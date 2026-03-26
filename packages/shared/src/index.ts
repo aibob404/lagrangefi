@@ -52,6 +52,8 @@ export interface MintRequest {
   tickLower: number
   tickUpper: number
   slippageTolerance: number
+  /** Per-request wallet: private key (0x...) or BIP39 mnemonic phrase */
+  walletPrivateKey?: string
 }
 
 export interface MintResult {

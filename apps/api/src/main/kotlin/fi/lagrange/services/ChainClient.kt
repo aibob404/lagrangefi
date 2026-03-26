@@ -69,6 +69,7 @@ data class MintRequest(
     val tickLower: Int,
     val tickUpper: Int,
     val slippageTolerance: Double,
+    val walletPrivateKey: String? = null,
 )
 
 @Serializable

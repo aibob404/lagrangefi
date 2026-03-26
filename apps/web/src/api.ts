@@ -92,6 +92,23 @@ export async function fetchStrategies(): Promise<Strategy[]> {
   return apiFetch('/api/v1/strategies')
 }
 
+export interface StartStrategyRequest {
+  name: string
+  ethAmount: string
+  usdcAmount: string
+  feeTier: number
+  rangePercent: number
+  slippageTolerance: number
+  pollIntervalSeconds: number
+}
+
+export async function startStrategy(req: StartStrategyRequest): Promise<{ tokenId: string; txHashes: string[] }> {
+  return apiFetch('/api/v1/strategies/start', {
+    method: 'POST',
+    body: JSON.stringify(req),
+  })
+}
+
 export async function createStrategy(req: CreateStrategyRequest): Promise<Strategy> {
   return apiFetch('/api/v1/strategies', {
     method: 'POST',

@@ -158,7 +158,7 @@ export default function StrategyPage() {
     }
   }
 
-  async function expandStrategy(id: number, token0: string, token1: string) {
+  async function expandStrategy(id: number, _token0: string, _token1: string) {
     if (expandedId === id) { setExpandedId(null); return }
     setExpandedId(id)
     const [s, r] = await Promise.all([

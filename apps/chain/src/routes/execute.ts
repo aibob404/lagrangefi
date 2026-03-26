@@ -24,7 +24,7 @@ export const executeRoutes: FastifyPluginAsync = async (server) => {
     } catch (err) {
       // Remove key so caller can retry with the same key after fixing the issue
       processedKeys.delete(req.idempotencyKey)
-      throw err
+      return reply.code(500).send({ success: false, txHashes: [], error: err instanceof Error ? err.message : String(err) })
     }
   })
 

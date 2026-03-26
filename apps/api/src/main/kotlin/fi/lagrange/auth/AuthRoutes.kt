@@ -16,7 +16,7 @@ import kotlinx.serialization.Serializable
 @Serializable data class MeResponse(val userId: Int, val username: String, val hasWallet: Boolean)
 @Serializable data class WalletRequest(val phrase: String)
 
-fun Route.authRoutes(userService: UserService, walletService: WalletService) {
+fun Route.authRoutes(userService: UserService, walletService: WalletService, chainClient: fi.lagrange.services.ChainClient) {
     route("/auth") {
         post("/register") {
             val req = call.receive<RegisterRequest>()
@@ -64,6 +64,19 @@ fun Route.authRoutes(userService: UserService, walletService: WalletService) {
                     }
                     walletService.upsertWallet(userId, req.phrase)
                     call.respond(mapOf("ok" to true))
+                }
+
+                /** Returns ETH and USDC balances for the user's configured wallet */
+                get("/balances") {
+                    val userId = call.getUserId()
+                    val phrase = walletService.getDecryptedPhrase(userId)
+                        ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "No wallet configured"))
+                    try {
+                        val balances = chainClient.getWalletBalances(phrase)
+                        call.respond(balances)
+                    } catch (e: Exception) {
+                        call.respond(HttpStatusCode.ServiceUnavailable, mapOf("error" to (e.message ?: "chain service unavailable")))
+                    }
                 }
             }
         }

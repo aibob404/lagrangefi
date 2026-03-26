@@ -22,19 +22,23 @@ function authHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
-async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
+async function apiFetch<T>(path: string, options?: RequestInit & { noRedirect?: boolean }): Promise<T> {
+  const { noRedirect, ...fetchOptions } = options ?? {}
   const res = await fetch(path, {
-    ...options,
+    ...fetchOptions,
     headers: {
       'Content-Type': 'application/json',
       ...authHeaders(),
-      ...(options?.headers ?? {}),
+      ...(fetchOptions?.headers ?? {}),
     },
   })
   if (res.status === 401) {
-    clearToken()
-    window.location.href = '/login'
-    throw new Error('Unauthorized')
+    if (!noRedirect) {
+      clearToken()
+      window.location.href = '/login'
+    }
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body.error ?? 'Invalid credentials')
   }
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
@@ -49,6 +53,7 @@ export async function register(username: string, password: string): Promise<{ to
   return apiFetch('/auth/register', {
     method: 'POST',
     body: JSON.stringify({ username, password }),
+    noRedirect: true,
   })
 }
 
@@ -56,6 +61,7 @@ export async function login(username: string, password: string): Promise<{ token
   return apiFetch('/auth/login', {
     method: 'POST',
     body: JSON.stringify({ username, password }),
+    noRedirect: true,
   })
 }
 
@@ -67,6 +73,10 @@ export async function fetchMe(): Promise<User> {
 
 export async function fetchWalletStatus(): Promise<{ hasWallet: boolean }> {
   return apiFetch('/me/wallet')
+}
+
+export async function fetchWalletBalances(): Promise<{ address: string; eth: string; usdc: string }> {
+  return apiFetch('/me/wallet/balances')
 }
 
 export async function saveWallet(phrase: string): Promise<void> {

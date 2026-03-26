@@ -36,8 +36,8 @@ fun Application.configureRouting(
             call.respond(mapOf("status" to "ok"))
         }
 
-        // Auth routes (public)
-        authRoutes(userService, walletService)
+        // Auth routes (public + protected /me routes)
+        authRoutes(userService, walletService, chainClient)
 
         authenticate("jwt") {
             route("/api/v1") {

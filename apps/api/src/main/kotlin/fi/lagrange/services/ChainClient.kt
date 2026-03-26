@@ -86,8 +86,11 @@ class ChainClient(private val baseUrl: String) {
         }
     }
 
-    suspend fun getWalletBalances(): WalletBalancesResponse =
-        http.get("$baseUrl/wallet/balances").body()
+    suspend fun getWalletBalances(walletPhrase: String): WalletBalancesResponse =
+        http.post("$baseUrl/wallet/balances") {
+            contentType(ContentType.Application.Json)
+            setBody(mapOf("walletPrivateKey" to walletPhrase))
+        }.body()
 
     suspend fun getPosition(tokenId: String): PositionResponse =
         http.get("$baseUrl/positions/$tokenId").body()

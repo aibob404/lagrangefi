@@ -1,10 +1,12 @@
-import { useState, useEffect, type FormEvent } from 'react'
+import { useState, useEffect, useRef, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   fetchStrategies, createStrategy, pauseStrategy, resumeStrategy, stopStrategy,
-  fetchStrategyStats, fetchStrategyRebalances,
+  fetchStrategyStats, fetchStrategyRebalances, fetchWalletBalances,
 } from '../api'
 import type { Strategy, StrategyStats, RebalanceEvent } from '../types'
+
+interface WalletBalances { address: string; eth: string; usdc: string }
 
 const TOKEN_LABELS: Record<string, string> = {
   '0x82af49447d8a07e3bd95bd0d56f35241523fbab1': 'WETH',
@@ -134,16 +136,18 @@ export default function StrategyPage() {
   const [rebalances, setRebalances] = useState<Record<number, RebalanceEvent[]>>({})
   const [expandedId, setExpandedId] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [walletBalances, setWalletBalances] = useState<WalletBalances | null>(null)
 
   // Create form
   const [showCreate, setShowCreate] = useState(false)
   const [createName, setCreateName] = useState('')
   const [createTokenId, setCreateTokenId] = useState('')
-  const [createRange, setCreateRange] = useState('5')
+  const [createRange, setCreateRange] = useState(5)
   const [createSlippage, setCreateSlippage] = useState('0.5')
   const [createInterval, setCreateInterval] = useState('60')
   const [createError, setCreateError] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
+  const balancesLoadedRef = useRef(false)
 
   useEffect(() => {
     load()
@@ -156,6 +160,22 @@ export default function StrategyPage() {
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to load strategies')
     }
+  }
+
+  async function loadBalances() {
+    if (balancesLoadedRef.current) return
+    balancesLoadedRef.current = true
+    try {
+      const b = await fetchWalletBalances()
+      setWalletBalances(b)
+    } catch {
+      // balances are optional — ignore errors
+    }
+  }
+
+  function openCreate() {
+    setShowCreate(true)
+    loadBalances()
   }
 
   async function expandStrategy(id: number, _token0: string, _token1: string) {
@@ -198,13 +218,14 @@ export default function StrategyPage() {
       await createStrategy({
         name: createName,
         tokenId: createTokenId,
-        rangePercent: parseFloat(createRange) / 100,
+        rangePercent: createRange / 100,
         slippageTolerance: parseFloat(createSlippage) / 100,
         pollIntervalSeconds: parseInt(createInterval, 10),
       })
       setShowCreate(false)
-      setCreateName(''); setCreateTokenId(''); setCreateRange('5')
+      setCreateName(''); setCreateTokenId(''); setCreateRange(5)
       setCreateSlippage('0.5'); setCreateInterval('60')
+      balancesLoadedRef.current = false
       load()
     } catch (err: unknown) {
       setCreateError(err instanceof Error ? err.message : 'Failed to create strategy')
@@ -221,7 +242,7 @@ export default function StrategyPage() {
         <h1 className="text-xl font-bold text-white">Strategies</h1>
         {!hasActive && (
           <button
-            onClick={() => setShowCreate(!showCreate)}
+            onClick={openCreate}
             className="bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors"
           >
             New strategy
@@ -236,36 +257,118 @@ export default function StrategyPage() {
       )}
 
       {showCreate && (
-        <form onSubmit={handleCreate} className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-6 mb-6 space-y-4">
-          <h2 className="text-base font-semibold text-white">Create strategy</h2>
+        <form onSubmit={handleCreate} className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-6 mb-6 space-y-5">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-base font-semibold text-white">Create strategy</h2>
+              <p className="text-xs text-slate-400 mt-0.5">Register an existing Uniswap v3 position for auto-rebalancing</p>
+            </div>
+            <button type="button" onClick={() => setShowCreate(false)} className="text-slate-400 hover:text-slate-200 transition-colors">
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+
+          {/* Wallet balances */}
+          {walletBalances && (
+            <div className="bg-slate-900/50 border border-slate-700/50 rounded-lg px-4 py-3 flex items-center gap-6">
+              <span className="text-xs font-semibold uppercase tracking-widest text-slate-500">Wallet</span>
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-slate-400">ETH</span>
+                <span className="text-sm font-mono text-white">{Number(walletBalances.eth).toFixed(4)}</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-slate-400">USDC</span>
+                <span className="text-sm font-mono text-white">{Number(walletBalances.usdc).toLocaleString('en-US', { maximumFractionDigits: 2 })}</span>
+              </div>
+              <span className="text-xs text-slate-600 font-mono ml-auto">
+                {walletBalances.address.slice(0, 6)}…{walletBalances.address.slice(-4)}
+              </span>
+            </div>
+          )}
+
           {createError && (
             <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-sm rounded-lg px-3 py-2">{createError}</div>
           )}
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs text-slate-400 mb-1">Name</label>
-              <input className="input w-full" value={createName} onChange={e => setCreateName(e.target.value)} placeholder="My ETH/USDC strategy" required />
+              <label className="block text-xs text-slate-400 mb-1">Strategy name</label>
+              <input
+                className="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 transition-colors"
+                value={createName} onChange={e => setCreateName(e.target.value)} placeholder="My ETH/USDC strategy" required
+              />
             </div>
             <div>
               <label className="block text-xs text-slate-400 mb-1">Position token ID (NFT)</label>
-              <input className="input w-full font-mono" value={createTokenId} onChange={e => setCreateTokenId(e.target.value)} placeholder="123456" required />
-            </div>
-            <div>
-              <label className="block text-xs text-slate-400 mb-1">Range (%)</label>
-              <input className="input w-full" type="number" step="0.1" min="0.1" max="50" value={createRange} onChange={e => setCreateRange(e.target.value)} required />
+              <input
+                className="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 font-mono focus:outline-none focus:border-blue-500 transition-colors"
+                value={createTokenId} onChange={e => setCreateTokenId(e.target.value)} placeholder="123456" required
+              />
             </div>
             <div>
               <label className="block text-xs text-slate-400 mb-1">Slippage tolerance (%)</label>
-              <input className="input w-full" type="number" step="0.01" min="0.01" max="5" value={createSlippage} onChange={e => setCreateSlippage(e.target.value)} required />
+              <input
+                className="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 transition-colors"
+                type="number" step="0.01" min="0.01" max="5" value={createSlippage}
+                onChange={e => setCreateSlippage(e.target.value)} required
+              />
             </div>
             <div>
               <label className="block text-xs text-slate-400 mb-1">Poll interval (seconds)</label>
-              <input className="input w-full" type="number" min="30" max="3600" value={createInterval} onChange={e => setCreateInterval(e.target.value)} required />
+              <input
+                className="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 transition-colors"
+                type="number" min="30" max="3600" value={createInterval}
+                onChange={e => setCreateInterval(e.target.value)} required
+              />
             </div>
           </div>
+
+          {/* Range slider */}
+          <div>
+            <label className="block text-xs text-slate-400 mb-1.5">
+              Rebalance trigger range — <span className="text-white font-medium">±{createRange}%</span> from current price
+            </label>
+            <input
+              type="range" min="1" max="20" step="1" value={createRange}
+              onChange={e => setCreateRange(Number(e.target.value))}
+              className="w-full accent-blue-500"
+            />
+            <div className="flex justify-between text-xs text-slate-500 mt-1">
+              <span>1% (tight)</span>
+              <span>20% (wide)</span>
+            </div>
+          </div>
+
+          {/* Summary */}
+          <div className="bg-slate-900/50 border border-slate-700/50 rounded-lg p-4 space-y-2">
+            <p className="text-xs font-medium text-slate-400 uppercase tracking-wider mb-2">Summary</p>
+            <div className="flex justify-between text-xs">
+              <span className="text-slate-500">Position NFT</span>
+              <span className="text-slate-300 font-mono">#{createTokenId || '—'}</span>
+            </div>
+            <div className="flex justify-between text-xs">
+              <span className="text-slate-500">Trigger range</span>
+              <span className="text-slate-300">±{createRange}% from current price</span>
+            </div>
+            <div className="flex justify-between text-xs">
+              <span className="text-slate-500">Slippage</span>
+              <span className="text-slate-300">{createSlippage}%</span>
+            </div>
+            <div className="flex justify-between text-xs">
+              <span className="text-slate-500">Poll every</span>
+              <span className="text-slate-300">{createInterval}s</span>
+            </div>
+            <div className="flex justify-between text-xs">
+              <span className="text-slate-500">Auto-rebalance</span>
+              <span className="text-emerald-400">Enabled</span>
+            </div>
+          </div>
+
           <div className="flex gap-2">
-            <button type="submit" disabled={creating} className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">
-              {creating ? 'Creating...' : 'Create'}
+            <button type="submit" disabled={creating} className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm font-medium px-5 py-2.5 rounded-lg transition-colors">
+              {creating ? 'Creating...' : 'Create strategy'}
             </button>
             <button type="button" onClick={() => setShowCreate(false)} className="text-slate-400 hover:text-white text-sm px-4 py-2 rounded-lg border border-slate-700 transition-colors">
               Cancel

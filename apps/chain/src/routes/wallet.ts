@@ -14,20 +14,21 @@ const ERC20_ABI = [
   },
 ] as const
 
+async function getBalances(walletPhrase?: string) {
+  const address = createWalletClientForKey(walletPhrase).account!.address
+  const [ethRaw, usdcRaw] = await Promise.all([
+    publicClient.getBalance({ address }),
+    publicClient.readContract({ address: USDC, abi: ERC20_ABI, functionName: 'balanceOf', args: [address] }),
+  ])
+  return { address, eth: formatEther(ethRaw), usdc: formatUnits(usdcRaw, 6) }
+}
+
 export const walletRoutes: FastifyPluginAsync = async (server) => {
-  // GET /wallet/balances — returns ETH and USDC balances of the bot wallet
-  server.get('/balances', async () => {
-    const address = createWalletClientForKey().account!.address
+  // GET /wallet/balances — returns balances of the default (env-var) wallet
+  server.get('/balances', async () => getBalances())
 
-    const [ethRaw, usdcRaw] = await Promise.all([
-      publicClient.getBalance({ address }),
-      publicClient.readContract({ address: USDC, abi: ERC20_ABI, functionName: 'balanceOf', args: [address] }),
-    ])
-
-    return {
-      address,
-      eth: formatEther(ethRaw),
-      usdc: formatUnits(usdcRaw, 6),
-    }
+  // POST /wallet/balances — returns balances for a specific wallet key (per-user)
+  server.post<{ Body: { walletPrivateKey?: string } }>('/balances', async (request) => {
+    return getBalances(request.body.walletPrivateKey)
   })
 }

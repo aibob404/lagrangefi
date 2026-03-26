@@ -92,6 +92,10 @@ class UniswapStrategy(
                     it[feesCollectedToken0] = fees0
                     it[feesCollectedToken1] = fees1
                     it[gasCostWei] = gasWei
+                    it[positionToken0Start] = result.positionToken0Start
+                    it[positionToken1Start] = result.positionToken1Start
+                    it[positionToken0End] = result.positionToken0End
+                    it[positionToken1End] = result.positionToken1End
                     it[completedAt] = Clock.System.now()
                 }
             }

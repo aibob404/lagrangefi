@@ -18,7 +18,14 @@ function shortHash(hash: string) {
   return hash.slice(0, 8) + '...' + hash.slice(-6)
 }
 
-function PriceRangeBar({ tick, tickLower, tickUpper }: { tick: number; tickLower: number; tickUpper: number }) {
+function tickToPrice(tick: number, decimals0: number, decimals1: number): number {
+  return Math.pow(1.0001, tick) * Math.pow(10, decimals0 - decimals1)
+}
+function formatPrice(price: number): string {
+  return price.toLocaleString('en-US', { maximumFractionDigits: 2 })
+}
+
+function PriceRangeBar({ tick, tickLower, tickUpper, decimals0, decimals1 }: { tick: number; tickLower: number; tickUpper: number; decimals0: number; decimals1: number }) {
   const inRange = tick >= tickLower && tick < tickUpper
   const rangeWidth = tickUpper - tickLower
   const padding = rangeWidth * 0.5
@@ -28,12 +35,15 @@ function PriceRangeBar({ tick, tickLower, tickUpper }: { tick: number; tickLower
   const lowerPct = ((tickLower - min) / total) * 100
   const upperPct = ((tickUpper - min) / total) * 100
   const currentPct = Math.min(Math.max(((tick - min) / total) * 100, 0), 100)
+  const lowerPrice = tickToPrice(tickLower, decimals0, decimals1)
+  const upperPrice = tickToPrice(tickUpper, decimals0, decimals1)
+  const currentPrice = tickToPrice(tick, decimals0, decimals1)
   return (
     <div className="mt-4">
       <div className="flex justify-between text-xs text-slate-400 mb-1">
-        <span>Tick {tickLower}</span>
-        <span>Current: {tick}</span>
-        <span>Tick {tickUpper}</span>
+        <span>${formatPrice(lowerPrice)}</span>
+        <span>Current: ${formatPrice(currentPrice)}</span>
+        <span>${formatPrice(upperPrice)}</span>
       </div>
       <div className="relative h-4 bg-slate-700 rounded-full overflow-visible">
         <div className={`absolute h-full rounded-full ${inRange ? 'bg-emerald-500/40' : 'bg-red-500/30'}`}
@@ -146,7 +156,9 @@ export default function DashboardPage() {
               <Row label="Token ID" value={`#${position.tokenId}`} />
               <Row label="Pair" value={`${tokenLabel(position.token0)} / ${tokenLabel(position.token1)}`} />
               <Row label="Fee Tier" value={feeLabel(position.fee)} />
-              <Row label="Tick Range" value={`${position.tickLower} → ${position.tickUpper}`} />
+              {poolState && (
+                <Row label="Price Range" value={`$${formatPrice(tickToPrice(position.tickLower, poolState.decimals0, poolState.decimals1))} → $${formatPrice(tickToPrice(position.tickUpper, poolState.decimals0, poolState.decimals1))}`} />
+              )}
               <Row label="Liquidity" value={BigInt(position.liquidity) > 0n ? '✓ Active' : '— Empty'} />
             </>
           ) : (
@@ -158,14 +170,14 @@ export default function DashboardPage() {
           {poolState ? (
             <>
               <Row label="Price (USDC/WETH)" value={`$${Number(poolState.price).toLocaleString('en-US', { maximumFractionDigits: 2 })}`} />
-              <Row label="Current Tick" value={poolState.tick} />
+              <Row label="Current Price" value={`$${formatPrice(tickToPrice(poolState.tick, poolState.decimals0, poolState.decimals1))}`} />
               <Row label="Status" value={inRange !== null ? <StatusBadge inRange={inRange} /> : '—'} />
             </>
           ) : (
             <p className="text-slate-500 text-sm">Loading...</p>
           )}
           {poolState && position && (
-            <PriceRangeBar tick={poolState.tick} tickLower={position.tickLower} tickUpper={position.tickUpper} />
+            <PriceRangeBar tick={poolState.tick} tickLower={position.tickLower} tickUpper={position.tickUpper} decimals0={poolState.decimals0} decimals1={poolState.decimals1} />
           )}
         </Card>
       </div>
@@ -196,7 +208,9 @@ export default function DashboardPage() {
                       }`}>{r.status}</span>
                     </td>
                     <td className="py-2 text-slate-300 font-mono text-xs">
-                      {r.newTickLower != null ? `${r.newTickLower} → ${r.newTickUpper}` : '—'}
+                      {r.newTickLower != null && poolState
+                        ? `$${formatPrice(tickToPrice(r.newTickLower, poolState.decimals0, poolState.decimals1))} → $${formatPrice(tickToPrice(r.newTickUpper!, poolState.decimals0, poolState.decimals1))}`
+                        : '—'}
                     </td>
                     <td className="py-2 text-slate-400 font-mono text-xs">
                       {r.txHashes

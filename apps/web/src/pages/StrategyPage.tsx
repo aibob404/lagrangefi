@@ -315,11 +315,13 @@ export default function StrategyPage() {
     if (expandedId === id) { setExpandedId(null); return }
     setExpandedId(id)
     if (!tabMap[id]) setTabMap(prev => ({ ...prev, [id]: 'overview' }))
+    const strategy = strategies.find(s => s.id === id)
+    const isActive = strategy?.status === 'active'
     const [s, r, pos, pool] = await Promise.all([
       fetchStrategyStats(id),
       fetchStrategyRebalances(id),
-      fetchPosition().catch(() => null),
-      fetchPoolState().catch(() => null),
+      isActive ? fetchPosition().catch(() => null) : Promise.resolve(null),
+      isActive ? fetchPoolState().catch(() => null) : Promise.resolve(null),
     ])
     setStats(prev => ({ ...prev, [id]: s }))
     setRebalances(prev => ({ ...prev, [id]: r }))
@@ -664,7 +666,7 @@ export default function StrategyPage() {
                         {daysRunning(s.createdAt)}d running
                       </span>
                     )}
-                    {inRange !== null && (
+                    {s.status === 'active' && inRange !== null && (
                       <span className={`hidden lg:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ${
                         inRange
                           ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
@@ -764,7 +766,7 @@ export default function StrategyPage() {
                           <div className="bg-white/40 border border-white/60 rounded-xl p-4">
                             <div className="flex items-center justify-between mb-3">
                               <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-400">Position</h3>
-                              {inRange !== null && (
+                              {s.status === 'active' && inRange !== null && (
                                 <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ${
                                   inRange
                                     ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
@@ -775,7 +777,11 @@ export default function StrategyPage() {
                                 </span>
                               )}
                             </div>
-                            {pos && pool ? (
+                            {s.status !== 'active' ? (
+                              <p className="text-xs text-gray-400 py-3">
+                                Live position data is only available for active strategies.
+                              </p>
+                            ) : pos && pool ? (
                               <>
                                 <InfoRow label="Token ID"   value={`#${pos.tokenId}`} />
                                 <InfoRow label="Pool price" value={`$${Number(pool.price).toLocaleString('en-US', { maximumFractionDigits: 2 })}`} />

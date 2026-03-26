@@ -121,10 +121,10 @@ function PriceRangeBar({ tick, tickLower, tickUpper, decimals0, decimals1 }: {
         <span className="font-medium text-gray-700">Now: ${formatPrice(cur)}</span>
         <span>${formatPrice(hi)}</span>
       </div>
-      <div className="relative h-3 bg-gray-100 rounded-full">
-        <div className={`absolute h-full rounded-full ${inRange ? 'bg-emerald-200' : 'bg-red-200'}`}
+      <div className="relative h-3 bg-gray-300 rounded-full">
+        <div className={`absolute h-full rounded-full ${inRange ? 'bg-emerald-400' : 'bg-red-400'}`}
           style={{ left: `${loPct}%`, width: `${hiPct - loPct}%` }} />
-        <div className={`absolute top-1/2 -translate-y-1/2 w-0.5 h-5 rounded-full ${inRange ? 'bg-emerald-500' : 'bg-red-500'}`}
+        <div className={`absolute top-1/2 -translate-y-1/2 w-1 h-5 rounded-full ${inRange ? 'bg-emerald-600' : 'bg-red-600'}`}
           style={{ left: `${curPct}%` }} />
       </div>
       <div className="flex justify-between text-xs mt-1.5">

@@ -179,6 +179,11 @@ export async function rebalance(req: RebalanceRequest): Promise<RebalanceResult>
   txHashes.push(decreaseTx)
   receipts.push(decreaseReceipt)
 
+  // From this point on, liquidity has been removed from the pool and tokens are owed to this
+  // position in the NonfungiblePositionManager. If anything below fails, we must collect those
+  // tokens back to the wallet so they are never left stranded in the contract.
+  try {
+
   // 3. Collect all tokens (includes accrued LP fees + withdrawn liquidity)
   const collectTx = await walletClient.writeContract({
     address: POSITION_MANAGER,
@@ -332,4 +337,30 @@ export async function rebalance(req: RebalanceRequest): Promise<RebalanceResult>
   const gasUsedWei = totalGasWei(receipts).toString()
 
   return { success: true, txHashes, newTokenId, feesCollected, gasUsedWei, positionToken0Start, positionToken1Start, positionToken0End, positionToken1End }
+
+  } catch (err) {
+    // Recovery: collect tokens back to wallet so they are not stranded in the position manager
+    try {
+      const recoverTx = await walletClient.writeContract({
+        address: POSITION_MANAGER,
+        abi: POSITION_MANAGER_ABI,
+        functionName: 'collect',
+        args: [{
+          tokenId,
+          recipient: account.address,
+          amount0Max: MAX_UINT128,
+          amount1Max: MAX_UINT128,
+        }],
+      })
+      await publicClient.waitForTransactionReceipt({ hash: recoverTx })
+      txHashes.push(recoverTx)
+    } catch (collectErr) {
+      // Recovery failed — include both errors in the response
+      const msg = err instanceof Error ? err.message : String(err)
+      const collectMsg = collectErr instanceof Error ? collectErr.message : String(collectErr)
+      return { success: false, txHashes, error: `${msg}; recovery collect also failed: ${collectMsg}` }
+    }
+    const msg = err instanceof Error ? err.message : String(err)
+    return { success: false, txHashes, error: `${msg}; tokens recovered to wallet` }
+  }
 }

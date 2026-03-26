@@ -1,6 +1,5 @@
 package fi.lagrange.plugins
 
-import fi.lagrange.auth.AuthRoutes
 import fi.lagrange.auth.authRoutes
 import fi.lagrange.auth.getUserId
 import fi.lagrange.services.ChainClient

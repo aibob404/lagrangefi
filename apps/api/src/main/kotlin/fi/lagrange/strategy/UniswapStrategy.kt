@@ -61,8 +61,8 @@ class UniswapStrategy(
                 it[RebalanceEvents.tokenId] = tokenId
                 it[RebalanceEvents.idempotencyKey] = idempotencyKey
                 it[status] = "pending"
-                it[newTickLower] = newTickLower
-                it[newTickUpper] = newTickUpper
+                it[RebalanceEvents.newTickLower] = newTickLower
+                it[RebalanceEvents.newTickUpper] = newTickUpper
                 it[triggeredAt] = Clock.System.now()
             } get RebalanceEvents.id
         }

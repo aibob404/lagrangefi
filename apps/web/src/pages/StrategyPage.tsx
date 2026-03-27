@@ -182,7 +182,7 @@ function RebalanceTable({ events, token0, token1 }: { events: RebalanceEvent[]; 
       <table className="w-full text-xs">
         <thead>
           <tr className="text-gray-400 border-b border-gray-100">
-            {['Time', 'Status', 'New Range', 'LP Fees', 'LP Value (start→end)', 'Gas', 'Tx'].map(h => (
+            {['Time', 'Status', 'Position NFT', 'New Range', 'LP Fees', 'LP Value (start→end)', 'Gas', 'Tx'].map(h => (
               <th key={h} className="text-left pb-2.5 font-semibold pr-4">{h}</th>
             ))}
           </tr>
@@ -203,6 +203,14 @@ function RebalanceTable({ events, token0, token1 }: { events: RebalanceEvent[]; 
                     r.status === 'failed'  ? 'bg-red-50 text-red-700 border border-red-200' :
                     'bg-amber-50 text-amber-700 border border-amber-200'
                   }`}>{r.status}</span>
+                </td>
+                <td className="py-2.5 text-gray-500 font-mono pr-4">
+                  <div className="space-y-0.5">
+                    <div>#{r.tokenId}</div>
+                    {r.newTokenId && r.newTokenId !== r.tokenId && (
+                      <div className="text-gray-400">↳ #{r.newTokenId}</div>
+                    )}
+                  </div>
                 </td>
                 <td className="py-2.5 text-gray-600 font-mono pr-4">
                   {r.newTickLower != null
@@ -721,7 +729,7 @@ export default function StrategyPage() {
                     <StatusBadge status={s.status} />
                     <span className="font-semibold text-gray-900 truncate">{s.name}</span>
                     <span className="text-xs text-gray-400 font-mono shrink-0 hidden sm:inline">
-                      {tokenLabel(s.token0)}/{tokenLabel(s.token1)} · {feeLabel(s.fee)} · #{s.currentTokenId}
+                      {tokenLabel(s.token0)}/{tokenLabel(s.token1)} · {feeLabel(s.fee)}
                     </span>
                     {s.status !== 'stopped' && (
                       <span className="text-xs text-gray-400 shrink-0 hidden md:inline">
@@ -822,8 +830,8 @@ export default function StrategyPage() {
                           </div>
                         )}
 
-                        {/* Position + Config */}
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {/* Position + Config + Fees & Gas */}
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                           {/* Position */}
                           <div className="bg-white/40 border border-white/60 rounded-xl p-4">
                             <div className="flex items-center justify-between mb-3">
@@ -840,12 +848,13 @@ export default function StrategyPage() {
                               )}
                             </div>
                             {s.status !== 'active' ? (
-                              <p className="text-xs text-gray-400 py-3">
-                                Live position data is only available for active strategies.
-                              </p>
+                              <>
+                                <InfoRow label="Last position" value={`#${s.currentTokenId}`} />
+                                <p className="text-xs text-gray-400 pt-2">Live data only available for active strategies.</p>
+                              </>
                             ) : pos && pool ? (
                               <>
-                                <InfoRow label="Token ID"   value={`#${pos.tokenId}`} />
+                                <InfoRow label="Position NFT" value={`#${pos.tokenId}`} />
                                 <InfoRow label="Pool price" value={`$${Number(pool.price).toLocaleString('en-US', { maximumFractionDigits: 2 })}`} />
                                 <InfoRow label="Liquidity"  value={BigInt(pos.liquidity) > 0n ? 'Active' : 'Empty'} />
                                 <InfoRow label="Fee tier"   value={feeLabel(pos.fee)} />
@@ -877,12 +886,20 @@ export default function StrategyPage() {
                             {st && st.totalRebalances >= 3 && st.avgRebalanceIntervalHours != null && (
                               <InfoRow label="Avg rebalance" value={`${st.avgRebalanceIntervalHours.toFixed(1)}h`} />
                             )}
-                            {st && (
+                            {st && <InfoRow label="Rebalances" value={String(st.totalRebalances)} />}
+                          </div>
+
+                          {/* Fees & Gas */}
+                          <div className="bg-white/40 border border-white/60 rounded-xl p-4">
+                            <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-3">Fees & Gas</h3>
+                            {st ? (
                               <>
                                 <InfoRow label={`Fees ${tokenLabel(s.token0)}`} value={formatRawWithUsd(st.feesCollectedToken0, tokenDecimals(s.token0), tokenLabel(s.token0), ethPrice)} />
-                                <InfoRow label={`Fees ${tokenLabel(s.token1)}`} value={formatRaw(st.feesCollectedToken1, tokenDecimals(s.token1))} />
+                                <InfoRow label={`Fees ${tokenLabel(s.token1)}`} value={`${formatRaw(st.feesCollectedToken1, tokenDecimals(s.token1))} ${tokenLabel(s.token1)}`} />
                                 <InfoRow label="Gas spent" value={`${weiToEth(st.gasCostWei)} ETH${st.gasCostUsd > 0 ? ` (${formatUsd(st.gasCostUsd)})` : ''}`} />
                               </>
+                            ) : (
+                              <p className="text-xs text-gray-400 py-2">Loading…</p>
                             )}
                           </div>
                         </div>

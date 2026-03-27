@@ -449,6 +449,17 @@ export default function StrategyPage() {
 
   const hasActive = strategies.some(s => s.status === 'active')
 
+  // Reset stale success banner whenever the active strategy disappears
+  // (covers both manual stop via UI and external stops discovered by the poll interval)
+  useEffect(() => {
+    if (!hasActive && formState === 'success') {
+      setShowCreate(false)
+      setFormState('form')
+      setCreateError(null)
+      setSuccessData(null)
+    }
+  }, [hasActive, formState])
+
   return (
     <div>
       {/* Header */}

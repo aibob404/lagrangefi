@@ -4,6 +4,7 @@ import fi.lagrange.auth.authRoutes
 import fi.lagrange.auth.getUserId
 import fi.lagrange.services.ChainClient
 import fi.lagrange.services.StrategyService
+import fi.lagrange.services.TelegramNotifier
 import fi.lagrange.services.UserService
 import fi.lagrange.services.WalletService
 import fi.lagrange.strategy.StrategyScheduler
@@ -60,6 +61,7 @@ fun Application.configureRouting(
     walletService: WalletService,
     strategyService: StrategyService,
     scheduler: StrategyScheduler,
+    telegram: TelegramNotifier,
 ) {
     routing {
         get("/health") {
@@ -179,8 +181,10 @@ fun Application.configureRouting(
                             initialToken0Amount = initialToken0,
                             initialToken1Amount = initialToken1,
                             initialValueUsd = initialValueUsd,
+                            initialGasWei = mintResult.gasUsedWei,
                         )
                         scheduler.start(strategy)
+                        telegram.sendAlert("Strategy <b>${strategy.name}</b> started! Position #${mintResult.tokenId} minted.")
                         call.respond(HttpStatusCode.Created, StartStrategyResponseDto(
                             tokenId = mintResult.tokenId,
                             txHashes = mintResult.txHashes,
@@ -224,6 +228,7 @@ fun Application.configureRouting(
                             pollIntervalSeconds = req.pollIntervalSeconds,
                         )
                         scheduler.start(strategy)
+                        telegram.sendAlert("Strategy <b>${strategy.name}</b> started! Managing position #${req.tokenId}.")
                         call.respond(HttpStatusCode.Created, strategy)
                     } catch (e: IllegalArgumentException) {
                         call.respond(HttpStatusCode.Conflict, mapOf("error" to e.message))
@@ -262,6 +267,7 @@ fun Application.configureRouting(
                         val closeEthPrice = poolState.price.toDoubleOrNull() ?: 0.0
                         strategyService.recordClose(strategyId, closeEthPrice)
                     } catch (_: Exception) { /* non-fatal */ }
+                    telegram.sendAlert("Strategy <b>${strategy.name}</b> stopped.")
                     call.respond(mapOf("status" to "stopped"))
                 }
 

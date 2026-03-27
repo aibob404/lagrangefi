@@ -67,6 +67,8 @@ export interface MintResult {
   tokenId?: string
   txHashes: string[]
   error?: string
+  /** Total gas cost across all mint transactions, in wei */
+  gasUsedWei?: string
 }
 
 export interface CloseRequest {

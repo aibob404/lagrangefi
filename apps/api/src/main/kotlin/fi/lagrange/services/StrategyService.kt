@@ -68,6 +68,7 @@ class StrategyService {
         initialToken0Amount: String? = null,
         initialToken1Amount: String? = null,
         initialValueUsd: Double? = null,
+        initialGasWei: String? = null,
     ): StrategyRecord = transaction {
         val activeCount = Strategies.selectAll()
             .where { (Strategies.userId eq userId) and (Strategies.status eq "active") }
@@ -101,7 +102,7 @@ class StrategyService {
             it[totalRebalances] = 0
             it[feesCollectedToken0] = "0"
             it[feesCollectedToken1] = "0"
-            it[gasCostWei] = "0"
+            it[gasCostWei] = initialGasWei ?: "0"
             it[totalPollTicks] = 0
             it[inRangeTicks] = 0
             it[timeInRangePct] = 0.0

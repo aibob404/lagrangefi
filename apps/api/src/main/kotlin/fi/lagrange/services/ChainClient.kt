@@ -92,6 +92,7 @@ data class MintResponse(
     val tokenId: String? = null,
     val txHashes: List<String>,
     val error: String? = null,
+    val gasUsedWei: String? = null,
 )
 
 class ChainClient(private val baseUrl: String) {

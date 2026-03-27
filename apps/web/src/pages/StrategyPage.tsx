@@ -473,7 +473,7 @@ export default function StrategyPage() {
   return (
     <div>
       {/* Header */}
-      <div className="flex items-start justify-between mb-7">
+      <div className="flex flex-wrap items-start justify-between gap-y-3 mb-7">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Strategies</h1>
           <p className="text-sm text-gray-500 mt-0.5">Uniswap v3 · Arbitrum</p>
@@ -568,10 +568,10 @@ export default function StrategyPage() {
               </div>
 
               {walletBalances && (
-                <div className="bg-blue-50/60 border border-blue-100 rounded-xl px-4 py-3 text-xs text-blue-700">
-                  Wallet: <span className="font-mono font-medium">{walletBalances.address.slice(0, 8)}…</span>
-                  <span className="ml-3 font-medium">{Number(walletBalances.eth).toFixed(4)} ETH</span>
-                  <span className="ml-3 font-medium">{Number(walletBalances.usdc).toLocaleString('en-US', { maximumFractionDigits: 0 })} USDC</span>
+                <div className="bg-blue-50/60 border border-blue-100 rounded-xl px-4 py-3 text-xs text-blue-700 flex flex-wrap gap-x-3 gap-y-1">
+                  <span>Wallet: <span className="font-mono font-medium">{walletBalances.address.slice(0, 8)}…</span></span>
+                  <span className="font-medium">{Number(walletBalances.eth).toFixed(4)} ETH</span>
+                  <span className="font-medium">{Number(walletBalances.usdc).toLocaleString('en-US', { maximumFractionDigits: 0 })} USDC</span>
                 </div>
               )}
 
@@ -773,7 +773,7 @@ export default function StrategyPage() {
                 )}
                 {/* Card header */}
                 <div
-                  className="flex items-center justify-between px-5 py-4 cursor-pointer hover:bg-white/20 transition-colors"
+                  className="flex items-center justify-between px-3 sm:px-5 py-3 sm:py-4 cursor-pointer hover:bg-white/20 transition-colors"
                   onClick={() => expandStrategy(s.id)}
                 >
                   <div className="flex items-center gap-3 min-w-0">
@@ -851,7 +851,7 @@ export default function StrategyPage() {
 
                 {/* Expanded */}
                 {expandedId === s.id && (
-                  <div className="border-t border-white/50 px-5 py-5 bg-white/10">
+                  <div className="border-t border-white/50 px-3 sm:px-5 py-4 sm:py-5 bg-white/10">
                     {/* Tabs */}
                     <div className="flex gap-1 bg-gray-100/80 border border-gray-200/60 rounded-xl p-1 w-fit mb-5">
                       {(['overview', 'history'] as const).map(t => (

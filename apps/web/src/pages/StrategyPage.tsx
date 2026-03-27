@@ -731,14 +731,14 @@ export default function StrategyPage() {
             const tab      = tabMap[s.id] ?? 'overview'
 
             return (
-              <div key={s.id} className={`relative backdrop-blur-xl rounded-2xl border shadow-lg overflow-hidden transition-shadow hover:shadow-xl ${
+              <div key={s.id} className={`relative backdrop-blur-xl rounded-2xl border shadow-lg transition-shadow hover:shadow-xl ${
                 s.status === 'active'
                   ? 'bg-white/65 border-white/70 shadow-emerald-100/50'
                   : 'bg-white/50 border-white/60'
               }`}>
                 {/* Active strategy top accent bar */}
                 {s.status === 'active' && (
-                  <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-emerald-400 via-teal-300 to-emerald-400" />
+                  <div className="absolute top-0 left-0 right-0 h-0.5 rounded-t-2xl bg-gradient-to-r from-emerald-400 via-teal-300 to-emerald-400" />
                 )}
                 {/* Card header */}
                 <div
@@ -900,9 +900,9 @@ export default function StrategyPage() {
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
 
                           {/* Position card */}
-                          <div className="bg-white/50 backdrop-blur-md border border-white/70 rounded-2xl overflow-hidden shadow-sm">
+                          <div className="bg-white/50 backdrop-blur-md border border-white/70 rounded-2xl shadow-sm">
                             {/* Colored header */}
-                            <div className="bg-gradient-to-r from-blue-500/10 via-sky-400/6 to-transparent border-b border-blue-100/50 px-5 pt-4 pb-3">
+                            <div className="bg-gradient-to-r from-blue-500/10 via-sky-400/6 to-transparent border-b border-blue-100/50 px-5 pt-4 pb-3 rounded-t-2xl">
                               <div className="flex items-center justify-between mb-1">
                                 <div className="flex items-center gap-2">
                                   <div className="w-0.5 h-4 rounded-full bg-gradient-to-b from-blue-400 to-sky-400" />
@@ -959,8 +959,8 @@ export default function StrategyPage() {
                           <div className="flex flex-col gap-4">
 
                             {/* Performance card */}
-                            <div className="bg-white/50 backdrop-blur-md border border-white/70 rounded-2xl overflow-hidden shadow-sm">
-                              <div className="bg-gradient-to-r from-emerald-500/10 via-teal-400/6 to-transparent border-b border-emerald-100/50 px-5 pt-4 pb-3">
+                            <div className="bg-white/50 backdrop-blur-md border border-white/70 rounded-2xl shadow-sm">
+                              <div className="bg-gradient-to-r from-emerald-500/10 via-teal-400/6 to-transparent border-b border-emerald-100/50 px-5 pt-4 pb-3 rounded-t-2xl">
                                 <div className="flex items-center gap-2">
                                   <div className="w-0.5 h-4 rounded-full bg-gradient-to-b from-emerald-400 to-teal-400" />
                                   <h3 className="text-[10px] font-bold uppercase tracking-widest text-emerald-600/90">Performance</h3>
@@ -1012,16 +1012,21 @@ export default function StrategyPage() {
                                       </div>
                                     </div>
                                     {/* Gas row */}
-                                    <div className="flex justify-between items-center px-2.5 py-1.5 rounded-lg bg-red-50/50 border border-red-100/60">
-                                      <span className="text-xs font-medium text-red-600 flex items-center gap-1.5">
+                                    <div className="flex justify-between items-start px-2.5 py-1.5 rounded-lg bg-red-50/50 border border-red-100/60">
+                                      <span className="text-xs font-medium text-red-600 flex items-center gap-1.5 mt-0.5">
                                         <span className="w-1.5 h-1.5 rounded-full bg-red-400" />
                                         Gas spent
                                       </span>
-                                      <span className="text-xs font-bold text-red-500 font-mono">
-                                        <Tooltip tip={`${st.gasCostWei} wei`}>
-                                          {fees ? '−' + formatUsd(fees.gasUsd) : weiToEth(st.gasCostWei) + ' ETH'}
-                                        </Tooltip>
-                                      </span>
+                                      <div className="text-right">
+                                        <p className="text-xs font-bold text-red-500 font-mono">
+                                          <Tooltip tip={`${st.gasCostWei} wei`}>
+                                            {fees ? '−' + formatUsd(fees.gasUsd) : weiToEth(st.gasCostWei) + ' ETH'}
+                                          </Tooltip>
+                                        </p>
+                                        {fees && (
+                                          <p className="text-[11px] text-gray-400 font-mono mt-0.5">{weiToEth(st.gasCostWei)} ETH</p>
+                                        )}
+                                      </div>
                                     </div>
                                     {/* Fees/gas ratio bar */}
                                     {fees && fees.feesUsd > 0 && (
@@ -1058,8 +1063,8 @@ export default function StrategyPage() {
                             </div>
 
                             {/* Config card */}
-                            <div className="bg-white/50 backdrop-blur-md border border-white/70 rounded-2xl overflow-hidden shadow-sm">
-                              <div className="bg-gradient-to-r from-violet-500/10 via-purple-400/6 to-transparent border-b border-violet-100/50 px-5 pt-4 pb-3">
+                            <div className="bg-white/50 backdrop-blur-md border border-white/70 rounded-2xl shadow-sm">
+                              <div className="bg-gradient-to-r from-violet-500/10 via-purple-400/6 to-transparent border-b border-violet-100/50 px-5 pt-4 pb-3 rounded-t-2xl">
                                 <div className="flex items-center gap-2">
                                   <div className="w-0.5 h-4 rounded-full bg-gradient-to-b from-violet-400 to-purple-400" />
                                   <h3 className="text-[10px] font-bold uppercase tracking-widest text-violet-500/90">Config</h3>

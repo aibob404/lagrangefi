@@ -41,6 +41,7 @@ export interface StrategyStats {
   feesCollectedToken0: string
   feesCollectedToken1: string
   gasCostWei: string
+  gasCostUsd: number
   totalPollTicks: number
   inRangeTicks: number
   timeInRangePct: number

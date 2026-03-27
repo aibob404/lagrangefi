@@ -33,6 +33,7 @@ data class StrategyStatsDto(
     val feesCollectedToken0: String,
     val feesCollectedToken1: String,
     val gasCostWei: String,
+    val gasCostUsd: Double,
     val totalPollTicks: Int,
     val inRangeTicks: Int,
     val timeInRangePct: Double,
@@ -161,6 +162,7 @@ class StrategyService {
         feesToken0: String,
         feesToken1: String,
         gasWei: String,
+        ethPriceUsd: Double,
     ) = transaction {
         val now = Clock.System.now()
         val row = StrategyStats.selectAll().where { StrategyStats.strategyId eq strategyId }.firstOrNull()
@@ -172,12 +174,16 @@ class StrategyService {
                 (feesToken1.toBigIntegerOrNull() ?: java.math.BigInteger.ZERO)
         val newGas = (row[StrategyStats.gasCostWei].toBigIntegerOrNull() ?: java.math.BigInteger.ZERO) +
                 (gasWei.toBigIntegerOrNull() ?: java.math.BigInteger.ZERO)
+        val gasEth = (gasWei.toBigIntegerOrNull() ?: java.math.BigInteger.ZERO)
+            .toBigDecimal().divide(java.math.BigDecimal("1000000000000000000"))
+        val newGasUsd = row[StrategyStats.gasCostUsd] + gasEth.toDouble() * ethPriceUsd
 
         StrategyStats.update({ StrategyStats.strategyId eq strategyId }) {
             it[totalRebalances] = row[StrategyStats.totalRebalances] + 1
             it[feesCollectedToken0] = newFees0.toString()
             it[feesCollectedToken1] = newFees1.toString()
             it[gasCostWei] = newGas.toString()
+            it[gasCostUsd] = newGasUsd
             it[updatedAt] = now
         }
     }
@@ -206,6 +212,7 @@ class StrategyService {
             feesCollectedToken0 = stats[StrategyStats.feesCollectedToken0],
             feesCollectedToken1 = stats[StrategyStats.feesCollectedToken1],
             gasCostWei = stats[StrategyStats.gasCostWei],
+            gasCostUsd = stats[StrategyStats.gasCostUsd],
             totalPollTicks = stats[StrategyStats.totalPollTicks],
             inRangeTicks = stats[StrategyStats.inRangeTicks],
             timeInRangePct = stats[StrategyStats.timeInRangePct],

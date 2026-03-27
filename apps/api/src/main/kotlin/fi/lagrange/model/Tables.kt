@@ -47,6 +47,8 @@ object StrategyStats : Table("strategy_stats") {
     val feesCollectedToken1 = varchar("fees_collected_token1", 78).default("0")
     /** Total gas cost across all rebalances, in wei, stored as decimal string */
     val gasCostWei = varchar("gas_cost_wei", 78).default("0")
+    /** Total gas cost in USD, accumulated at the ETH price at time of each rebalance */
+    val gasCostUsd = double("gas_cost_usd").default(0.0)
     val totalPollTicks = integer("total_poll_ticks").default(0)
     val inRangeTicks = integer("in_range_ticks").default(0)
     val timeInRangePct = double("time_in_range_pct").default(0.0)

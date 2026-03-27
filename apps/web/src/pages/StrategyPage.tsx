@@ -69,9 +69,11 @@ function computeNetFees(stats: StrategyStats, ethPrice: number, _token0: string,
   if (!tokenLabel(token1).includes('USDC')) return null
   const feesToken0Eth = Number(BigInt(stats.feesCollectedToken0)) / 1e18
   const feesToken1Usd = Number(BigInt(stats.feesCollectedToken1)) / 1e6
-  const gasEth = Number(BigInt(stats.gasCostWei)) / 1e18
   const feesUsd = feesToken1Usd + feesToken0Eth * ethPrice
-  const gasUsd = gasEth * ethPrice
+  // Use historically-accurate gas cost in USD; fall back to current price if not yet populated
+  const gasUsd = stats.gasCostUsd > 0
+    ? stats.gasCostUsd
+    : (Number(BigInt(stats.gasCostWei)) / 1e18) * ethPrice
   return { feesUsd, gasUsd, netUsd: feesUsd - gasUsd }
 }
 
@@ -879,7 +881,7 @@ export default function StrategyPage() {
                               <>
                                 <InfoRow label={`Fees ${tokenLabel(s.token0)}`} value={formatRawWithUsd(st.feesCollectedToken0, tokenDecimals(s.token0), tokenLabel(s.token0), ethPrice)} />
                                 <InfoRow label={`Fees ${tokenLabel(s.token1)}`} value={formatRaw(st.feesCollectedToken1, tokenDecimals(s.token1))} />
-                                <InfoRow label="Gas spent" value={`${weiToEth(st.gasCostWei)} ETH`} />
+                                <InfoRow label="Gas spent" value={`${weiToEth(st.gasCostWei)} ETH${st.gasCostUsd > 0 ? ` (${formatUsd(st.gasCostUsd)})` : ''}`} />
                               </>
                             )}
                           </div>

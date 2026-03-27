@@ -51,6 +51,7 @@ const MOCK_STATS = {
   feesCollectedToken0: '4320000000000000', // WETH (18 decimals) ~0.00432 WETH
   feesCollectedToken1: '12340000',          // USDC (6 decimals)  ~12.34 USDC
   gasCostWei: '8200000000000000',
+  gasCostUsd: 27.83, // ~0.0082 ETH * ~$3400
   totalPollTicks: 1200,
   inRangeTicks: 980,
   timeInRangePct: 81.67,

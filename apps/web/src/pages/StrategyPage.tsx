@@ -80,6 +80,13 @@ function daysRunning(createdAt: string) {
   return Math.floor((Date.now() - new Date(createdAt).getTime()) / 86_400_000)
 }
 
+function computeUnclaimedFees(pos: import('../types').Position, ethPrice: number, dec0: number, dec1: number) {
+  if (!pos.tokensOwed0 || !pos.tokensOwed1) return null
+  const t0 = Number(BigInt(pos.tokensOwed0)) / Math.pow(10, dec0)
+  const t1 = Number(BigInt(pos.tokensOwed1)) / Math.pow(10, dec1)
+  return { t0, t1, usd: t0 * ethPrice + t1 }
+}
+
 function computeNetFees(stats: StrategyStats, ethPrice: number, _token0: string, token1: string, dec0: number, dec1: number) {
   if (!tokenLabel(token1).includes('USDC')) return null
   // Prefer historically-accurate accumulated USD value; fall back to current price
@@ -327,6 +334,7 @@ export default function StrategyPage() {
   const [expandedId,    setExpandedId]  = useState<number | null>(null)
   const [tabMap,        setTabMap]      = useState<Record<number, 'overview' | 'history'>>({})
   const [confirmStopId, setConfirmStopId] = useState<number | null>(null)
+  const [stoppingId,    setStoppingId]    = useState<number | null>(null)
   const [error,         setError]       = useState<string | null>(null)
   const [walletBalances, setWalletBalances] = useState<WalletBalances | null>(null)
   const [lastUpdated,   setLastUpdated] = useState<Date | null>(null)
@@ -410,8 +418,13 @@ export default function StrategyPage() {
   }
 
   async function handleStop(id: number) {
-    await stopStrategy(id)
-    setConfirmStopId(null); setExpandedId(null); load()
+    setStoppingId(id)
+    try {
+      await stopStrategy(id)
+      setConfirmStopId(null); setExpandedId(null); closeCreate(); load()
+    } finally {
+      setStoppingId(null)
+    }
   }
 
   async function handleCreate(e: FormEvent) {
@@ -442,6 +455,20 @@ export default function StrategyPage() {
   }
 
   const hasActive = strategies.some(s => s.status === 'active')
+
+  // Reset stale success banner only when a strategy transitions active→inactive
+  // (e.g. stopped externally via poll). Does NOT fire on initial load (hasActive=false)
+  // or right after creation (would hide the banner immediately).
+  const prevHasActiveRef = useRef(hasActive)
+  useEffect(() => {
+    if (prevHasActiveRef.current && !hasActive && formState === 'success') {
+      setShowCreate(false)
+      setFormState('form')
+      setCreateError(null)
+      setSuccessData(null)
+    }
+    prevHasActiveRef.current = hasActive
+  }, [hasActive, formState])
 
   return (
     <div>
@@ -487,15 +514,17 @@ export default function StrategyPage() {
       )}
 
       {/* ── Create form ─────────────────────────────────────────────────────── */}
-      {showCreate && !hasActive && (
+      {showCreate && (!hasActive || formState === 'success') && (
         <div className="bg-white/60 backdrop-blur-xl rounded-2xl border border-white/70 shadow-lg shadow-black/5 p-6 mb-6">
           <div className="flex items-center justify-between mb-5">
             <h2 className="text-base font-semibold text-gray-900">New strategy</h2>
-            <button onClick={closeCreate} className="text-gray-400 hover:text-gray-600 transition-colors">
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
+            {formState !== 'submitting' && (
+              <button onClick={closeCreate} className="text-gray-400 hover:text-gray-600 transition-colors">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            )}
           </div>
 
           {formState === 'success' && successData && (
@@ -576,7 +605,7 @@ export default function StrategyPage() {
                       )}
                     </div>
                     <div className="relative">
-                      <input type="number" min="0" step="1" placeholder="0.0" value={usdcAmount}
+                      <input type="number" min="0" step="any" placeholder="0.0" value={usdcAmount}
                         onChange={e => setUsdcAmount(e.target.value)}
                         className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:border-blue-500 focus:bg-white pr-14" />
                       <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-400 font-medium">USDC</span>
@@ -706,10 +735,12 @@ export default function StrategyPage() {
                     </>
                   ) : createMode === 'mint' ? 'Start strategy' : 'Register strategy'}
                 </button>
-                <button type="button" onClick={closeCreate}
-                  className="text-gray-500 hover:text-gray-900 text-sm font-medium px-4 py-2.5 rounded-xl border border-gray-200 hover:border-gray-300 bg-white/60 hover:bg-white/80 transition-all">
-                  Cancel
-                </button>
+                {formState !== 'submitting' && (
+                  <button type="button" onClick={closeCreate}
+                    className="text-gray-500 hover:text-gray-900 text-sm font-medium px-4 py-2.5 rounded-xl border border-gray-200 hover:border-gray-300 bg-white/60 hover:bg-white/80 transition-all">
+                    Cancel
+                  </button>
+                )}
               </div>
             </form>
           )}
@@ -783,19 +814,31 @@ export default function StrategyPage() {
                     )}
                     {confirmStopId === s.id && (
                       <div className="flex items-center gap-2 bg-white/80 backdrop-blur-md border border-red-100 rounded-xl px-3 py-1.5 shadow-lg shadow-red-500/10">
-                        <span className="text-xs text-gray-500 font-medium whitespace-nowrap">Stop permanently?</span>
-                        <button onClick={() => handleStop(s.id)}
+                        <span className="text-xs text-gray-500 font-medium whitespace-nowrap">
+                          {stoppingId === s.id ? 'Stopping…' : 'Stop permanently?'}
+                        </span>
+                        <button onClick={() => handleStop(s.id)} disabled={stoppingId === s.id}
                           className="inline-flex items-center gap-1 text-xs font-bold text-white
                                      bg-gradient-to-r from-red-500 to-rose-600
                                      hover:from-red-600 hover:to-rose-700
+                                     disabled:opacity-60 disabled:cursor-not-allowed
                                      px-3 py-1 rounded-lg shadow-sm shadow-red-500/30 transition-all hover:shadow-red-500/50 hover:shadow-md">
-                          <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
-                          Confirm
+                          {stoppingId === s.id ? (
+                            <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+                            </svg>
+                          ) : (
+                            <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+                          )}
+                          {stoppingId === s.id ? '' : 'Confirm'}
                         </button>
-                        <button onClick={() => setConfirmStopId(null)}
-                          className="text-xs font-medium text-gray-400 hover:text-gray-600 transition-colors">
-                          Cancel
-                        </button>
+                        {stoppingId !== s.id && (
+                          <button onClick={() => setConfirmStopId(null)}
+                            className="text-xs font-medium text-gray-400 hover:text-gray-600 transition-colors">
+                            Cancel
+                          </button>
+                        )}
                       </div>
                     )}
                     <svg
@@ -1011,6 +1054,24 @@ export default function StrategyPage() {
                                         )}
                                       </div>
                                     </div>
+                                    {/* Unclaimed fees row — live from chain, active only */}
+                                    {s.status === 'active' && pos && (() => {
+                                      const uf = computeUnclaimedFees(pos, ethPrice, s.token0Decimals ?? 18, s.token1Decimals ?? 6)
+                                      return uf ? (
+                                        <div className="flex justify-between items-start px-2.5 py-1.5 rounded-lg bg-sky-50/50 border border-sky-100/60">
+                                          <span className="text-xs font-medium text-sky-700 flex items-center gap-1.5 mt-0.5">
+                                            <span className="w-1.5 h-1.5 rounded-full bg-sky-400" />
+                                            Unclaimed fees
+                                          </span>
+                                          <div className="text-right">
+                                            <p className="text-xs font-bold text-sky-600 font-mono">+{formatUsd(uf.usd)}</p>
+                                            <p className="text-[11px] text-gray-400 font-mono mt-0.5">
+                                              {uf.t0.toFixed(6)} {tokenLabel(s.token0)} · {uf.t1.toFixed(2)} {tokenLabel(s.token1)}
+                                            </p>
+                                          </div>
+                                        </div>
+                                      ) : null
+                                    })()}
                                     {/* Gas row */}
                                     <div className="flex justify-between items-start px-2.5 py-1.5 rounded-lg bg-red-50/50 border border-red-100/60">
                                       <span className="text-xs font-medium text-red-600 flex items-center gap-1.5 mt-0.5">

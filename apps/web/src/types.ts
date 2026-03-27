@@ -7,6 +7,8 @@ export interface Position {
   tickLower: number
   tickUpper: number
   liquidity: string
+  tokensOwed0?: string
+  tokensOwed1?: string
 }
 
 export interface PoolState {

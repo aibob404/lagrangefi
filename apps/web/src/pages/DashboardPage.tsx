@@ -26,6 +26,14 @@ function daysRunning(createdAt: string) {
   return Math.floor((Date.now() - new Date(createdAt).getTime()) / 86_400_000)
 }
 
+// Compute current unclaimed LP fees in USD from position tokensOwed
+function computeUnclaimedFees(position: Position, ethPrice: number): { weth: number; usdc: number; usd: number } | null {
+  if (!position.tokensOwed0 || !position.tokensOwed1) return null
+  const weth = Number(BigInt(position.tokensOwed0)) / 1e18
+  const usdc = Number(BigInt(position.tokensOwed1)) / 1e6
+  return { weth, usdc, usd: weth * ethPrice + usdc }
+}
+
 // Compute net fees in USD using pool price (token1/token0 = USDC/WETH)
 function computeNetFees(stats: StrategyStats, ethPrice: number, _token0: string, token1: string) {
   const t1Label = tokenLabel(token1)
@@ -229,6 +237,7 @@ export default function DashboardPage() {
   const fees = stats && strategy
     ? computeNetFees(stats, ethPrice, strategy.token0, strategy.token1)
     : null
+  const unclaimedFees = position ? computeUnclaimedFees(position, ethPrice) : null
 
   const successCount = rebalances.filter(r => r.status === 'success').length
   const failedCount  = rebalances.filter(r => r.status === 'failed').length
@@ -295,12 +304,20 @@ export default function DashboardPage() {
       )}
 
       {/* Metric cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-4">
         <MetricCard
           label="ETH Price"
           value={poolState ? `$${Math.round(parseFloat(poolState.price)).toLocaleString()}` : '—'}
           sub="USDC per WETH"
           accent="blue"
+        />
+        <MetricCard
+          label="Unclaimed Fees"
+          value={unclaimedFees ? formatUsd(unclaimedFees.usd) : '—'}
+          sub={unclaimedFees
+            ? `${unclaimedFees.weth.toFixed(6)} WETH · ${unclaimedFees.usdc.toFixed(2)} USDC`
+            : 'accrued in active LP'}
+          accent={unclaimedFees && unclaimedFees.usd > 0 ? 'green' : undefined}
         />
         <MetricCard
           label="Net Fees"

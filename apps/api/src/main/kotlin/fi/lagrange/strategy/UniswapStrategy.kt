@@ -78,8 +78,9 @@ class UniswapStrategy(
             )
 
             if (result.success) {
-                log.info("Strategy=${strategy.id} rebalance succeeded. newTokenId=${result.newTokenId}")
-                telegram.sendAlert("[${strategy.name}] Rebalance successful! New tokenId=${result.newTokenId}")
+                val recoveryNote = if (result.isRecovery == true) " (recovery — fees from prior partial rebalance may be untracked)" else ""
+                log.info("Strategy=${strategy.id} rebalance succeeded${recoveryNote}. newTokenId=${result.newTokenId}")
+                telegram.sendAlert("[${strategy.name}] Rebalance successful${recoveryNote}! New tokenId=${result.newTokenId}")
 
                 val fees0 = result.feesCollected?.amount0 ?: "0"
                 val fees1 = result.feesCollected?.amount1 ?: "0"
@@ -99,6 +100,9 @@ class UniswapStrategy(
                         it[positionToken1End] = result.positionToken1End
                         it[ethPriceUsd] = poolState.price
                         it[completedAt] = Clock.System.now()
+                        if (result.isRecovery == true) {
+                            it[errorMessage] = "recovery: position was empty on entry; fees from prior partial rebalance are untracked"
+                        }
                     }
                 }
 

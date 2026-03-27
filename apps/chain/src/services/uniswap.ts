@@ -5,6 +5,8 @@ import type { Position, PoolState } from '@lagrangefi/shared'
 // Uniswap v3 NonfungiblePositionManager on Arbitrum
 const POSITION_MANAGER = '0xC36442b4a4522E871399CD717aBDD847Ab11FE88' as const
 
+const MAX_UINT128 = BigInt('340282366920938463463374607431768211455')
+
 // Minimal ABI — only what we need
 const POSITION_MANAGER_ABI = [
   {
@@ -25,6 +27,34 @@ const POSITION_MANAGER_ABI = [
       { name: 'feeGrowthInside1LastX128', type: 'uint256' },
       { name: 'tokensOwed0', type: 'uint128' },
       { name: 'tokensOwed1', type: 'uint128' },
+    ],
+  },
+  {
+    name: 'ownerOf',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [{ name: 'tokenId', type: 'uint256' }],
+    outputs: [{ name: 'owner', type: 'address' }],
+  },
+  {
+    name: 'collect',
+    type: 'function',
+    stateMutability: 'payable',
+    inputs: [
+      {
+        name: 'params',
+        type: 'tuple',
+        components: [
+          { name: 'tokenId', type: 'uint256' },
+          { name: 'recipient', type: 'address' },
+          { name: 'amount0Max', type: 'uint128' },
+          { name: 'amount1Max', type: 'uint128' },
+        ],
+      },
+    ],
+    outputs: [
+      { name: 'amount0', type: 'uint256' },
+      { name: 'amount1', type: 'uint256' },
     ],
   },
 ] as const
@@ -64,22 +94,51 @@ const FACTORY_ABI = [
 const FACTORY = '0x1F98431c8aD98523631AE4a59f267346ea31F984' as const
 
 export async function getPosition(tokenId: bigint): Promise<Position> {
-  const result = await publicClient.readContract({
-    address: POSITION_MANAGER,
-    abi: POSITION_MANAGER_ABI,
-    functionName: 'positions',
-    args: [tokenId],
-  })
+  const [result, owner] = await Promise.all([
+    publicClient.readContract({
+      address: POSITION_MANAGER,
+      abi: POSITION_MANAGER_ABI,
+      functionName: 'positions',
+      args: [tokenId],
+    }),
+    publicClient.readContract({
+      address: POSITION_MANAGER,
+      abi: POSITION_MANAGER_ABI,
+      functionName: 'ownerOf',
+      args: [tokenId],
+    }),
+  ])
+
+  // Simulate collect() to get actual unclaimed fees including pending accrued fees.
+  // positions() only returns already-checkpointed tokensOwed; pending fees since the
+  // last checkpoint are not included until a collect/modify triggers a snapshot.
+  let tokensOwed0 = result[10]
+  let tokensOwed1 = result[11]
+  try {
+    const { result: collected } = await publicClient.simulateContract({
+      address: POSITION_MANAGER,
+      abi: POSITION_MANAGER_ABI,
+      functionName: 'collect',
+      args: [{ tokenId, recipient: owner, amount0Max: MAX_UINT128, amount1Max: MAX_UINT128 }],
+      account: owner,
+    })
+    tokensOwed0 = collected[0]
+    tokensOwed1 = collected[1]
+  } catch {
+    // fall back to checkpointed values if simulation fails
+  }
 
   return {
     tokenId: tokenId.toString(),
-    owner: '', // fetched separately if needed
+    owner,
     token0: result[2],
     token1: result[3],
     fee: result[4],
     tickLower: result[5],
     tickUpper: result[6],
     liquidity: result[7].toString(),
+    tokensOwed0: tokensOwed0.toString(),
+    tokensOwed1: tokensOwed1.toString(),
   }
 }
 

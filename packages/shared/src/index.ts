@@ -9,6 +9,9 @@ export interface Position {
   tickLower: number
   tickUpper: number
   liquidity: string
+  /** Uncollected LP fees accrued in the position (raw token units) */
+  tokensOwed0?: string
+  tokensOwed1?: string
 }
 
 export interface PoolState {
@@ -49,6 +52,8 @@ export interface RebalanceResult {
   /** Raw token amounts deposited into new position after rebalance */
   positionToken0End?: string
   positionToken1End?: string
+  /** True when rebalance ran in recovery mode (position had no liquidity on entry) */
+  isRecovery?: boolean
 }
 
 export interface MintRequest {

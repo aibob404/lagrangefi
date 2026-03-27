@@ -374,7 +374,8 @@ export async function rebalance(req: RebalanceRequest): Promise<RebalanceResult>
 
   const gasUsedWei = totalGasWei(receipts).toString()
 
-  return { success: true, txHashes, newTokenId, feesCollected, gasUsedWei, positionToken0Start, positionToken1Start, positionToken0End, positionToken1End }
+  const isRecovery = liquidity === 0n
+  return { success: true, txHashes, newTokenId, feesCollected, gasUsedWei, positionToken0Start, positionToken1Start, positionToken0End, positionToken1End, isRecovery }
 
   } catch (err) {
     // Recovery: collect tokens back to wallet so they are not stranded in the position manager

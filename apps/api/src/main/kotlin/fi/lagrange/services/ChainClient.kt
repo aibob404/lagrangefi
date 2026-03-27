@@ -20,6 +20,8 @@ data class PositionResponse(
     val tickLower: Int,
     val tickUpper: Int,
     val liquidity: String,
+    val tokensOwed0: String? = null,
+    val tokensOwed1: String? = null,
 )
 
 @Serializable
@@ -49,6 +51,7 @@ data class RebalanceResponse(
     val positionToken1Start: String? = null,
     val positionToken0End: String? = null,
     val positionToken1End: String? = null,
+    val isRecovery: Boolean? = null,
 )
 
 @Serializable

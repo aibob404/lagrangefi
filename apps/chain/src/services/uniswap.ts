@@ -80,6 +80,8 @@ export async function getPosition(tokenId: bigint): Promise<Position> {
     tickLower: result[5],
     tickUpper: result[6],
     liquidity: result[7].toString(),
+    tokensOwed0: result[10].toString(),
+    tokensOwed1: result[11].toString(),
   }
 }
 

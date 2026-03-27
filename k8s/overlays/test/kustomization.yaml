@@ -12,13 +12,13 @@ patches:
 images:
   - name: lagrangefi/api
     newName: ghcr.io/aibob404/lagrangefi-api
-    newTag: sha-89e68c0
+    newTag: sha-3f2c15d
   - name: lagrangefi/chain
     newName: ghcr.io/aibob404/lagrangefi-chain
-    newTag: sha-89e68c0
+    newTag: sha-3f2c15d
   - name: lagrangefi/web
     newName: ghcr.io/aibob404/lagrangefi-web
-    newTag: sha-89e68c0
+    newTag: sha-3f2c15d
 # ─── Secrets ──────────────────────────────────────────────────────────────────
 #
 # postgres-secret

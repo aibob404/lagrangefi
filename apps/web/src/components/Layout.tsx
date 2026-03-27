@@ -69,7 +69,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       </div>
 
       {/* Sidebar */}
-      <aside className="w-56 backdrop-blur-2xl bg-white/40 border-r border-white/60 flex flex-col shrink-0 shadow-xl shadow-black/5">
+      <aside className="w-56 backdrop-blur-2xl bg-white/40 border-r border-white/60 flex flex-col shrink-0 shadow-xl shadow-black/5 sticky top-0 h-screen">
 
         {/* Logo */}
         <Link to="/strategies" className="flex items-center gap-2.5 px-4 py-5 border-b border-white/50 group">
@@ -88,7 +88,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
         {/* Profile card */}
         {user && (
-          <div className="mx-2 mb-3">
+          <div className="mx-2 mb-3 border-t border-gray-200/70 pt-3">
             <div className="bg-white/50 backdrop-blur-sm border border-white/70 rounded-2xl overflow-hidden shadow-sm">
 
               {/* User info row */}
@@ -136,7 +136,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       </aside>
 
       {/* Main content */}
-      <main className="flex-1 overflow-auto">
+      <main className="flex-1 overflow-y-auto h-screen">
         <div className="max-w-5xl mx-auto px-6 py-8">
           {children}
         </div>

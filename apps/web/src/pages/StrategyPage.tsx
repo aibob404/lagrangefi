@@ -80,6 +80,13 @@ function daysRunning(createdAt: string) {
   return Math.floor((Date.now() - new Date(createdAt).getTime()) / 86_400_000)
 }
 
+function computeUnclaimedFees(pos: import('../types').Position, ethPrice: number, dec0: number, dec1: number) {
+  if (!pos.tokensOwed0 || !pos.tokensOwed1) return null
+  const t0 = Number(BigInt(pos.tokensOwed0)) / Math.pow(10, dec0)
+  const t1 = Number(BigInt(pos.tokensOwed1)) / Math.pow(10, dec1)
+  return { t0, t1, usd: t0 * ethPrice + t1 }
+}
+
 function computeNetFees(stats: StrategyStats, ethPrice: number, _token0: string, token1: string, dec0: number, dec1: number) {
   if (!tokenLabel(token1).includes('USDC')) return null
   // Prefer historically-accurate accumulated USD value; fall back to current price
@@ -449,15 +456,18 @@ export default function StrategyPage() {
 
   const hasActive = strategies.some(s => s.status === 'active')
 
-  // Reset stale success banner whenever the active strategy disappears
-  // (covers both manual stop via UI and external stops discovered by the poll interval)
+  // Reset stale success banner only when a strategy transitions active→inactive
+  // (e.g. stopped externally via poll). Does NOT fire on initial load (hasActive=false)
+  // or right after creation (would hide the banner immediately).
+  const prevHasActiveRef = useRef(hasActive)
   useEffect(() => {
-    if (!hasActive && formState === 'success') {
+    if (prevHasActiveRef.current && !hasActive && formState === 'success') {
       setShowCreate(false)
       setFormState('form')
       setCreateError(null)
       setSuccessData(null)
     }
+    prevHasActiveRef.current = hasActive
   }, [hasActive, formState])
 
   return (
@@ -504,7 +514,7 @@ export default function StrategyPage() {
       )}
 
       {/* ── Create form ─────────────────────────────────────────────────────── */}
-      {showCreate && !hasActive && (
+      {showCreate && (!hasActive || formState === 'success') && (
         <div className="bg-white/60 backdrop-blur-xl rounded-2xl border border-white/70 shadow-lg shadow-black/5 p-6 mb-6">
           <div className="flex items-center justify-between mb-5">
             <h2 className="text-base font-semibold text-gray-900">New strategy</h2>
@@ -1044,6 +1054,24 @@ export default function StrategyPage() {
                                         )}
                                       </div>
                                     </div>
+                                    {/* Unclaimed fees row — live from chain, active only */}
+                                    {s.status === 'active' && pos && (() => {
+                                      const uf = computeUnclaimedFees(pos, ethPrice, s.token0Decimals ?? 18, s.token1Decimals ?? 6)
+                                      return uf ? (
+                                        <div className="flex justify-between items-start px-2.5 py-1.5 rounded-lg bg-sky-50/50 border border-sky-100/60">
+                                          <span className="text-xs font-medium text-sky-700 flex items-center gap-1.5 mt-0.5">
+                                            <span className="w-1.5 h-1.5 rounded-full bg-sky-400" />
+                                            Unclaimed fees
+                                          </span>
+                                          <div className="text-right">
+                                            <p className="text-xs font-bold text-sky-600 font-mono">+{formatUsd(uf.usd)}</p>
+                                            <p className="text-[11px] text-gray-400 font-mono mt-0.5">
+                                              {uf.t0.toFixed(6)} {tokenLabel(s.token0)} · {uf.t1.toFixed(2)} {tokenLabel(s.token1)}
+                                            </p>
+                                          </div>
+                                        </div>
+                                      ) : null
+                                    })()}
                                     {/* Gas row */}
                                     <div className="flex justify-between items-start px-2.5 py-1.5 rounded-lg bg-red-50/50 border border-red-100/60">
                                       <span className="text-xs font-medium text-red-600 flex items-center gap-1.5 mt-0.5">

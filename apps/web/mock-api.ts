@@ -56,10 +56,10 @@ const MOCK_STRATEGIES = [
     initialToken1Amount: '500000000',            // 500 USDC
     initialValueUsd: 1480.50,                    // 0.35 * 2801.43 + 500
     openEthPriceUsd: 2801.43,
-    openTxHashes: [
+    openTxHashes: JSON.stringify([
       '0xopen1aaa111bbb222ccc333ddd444eee555fff666aaa111bbb222ccc333ddd444',
       '0xopen2bbb222ccc333ddd444eee555fff666aaa111bbb222ccc333ddd444eee555',
-    ],
+    ]),
   },
   // Stopped strategy
   {
@@ -82,10 +82,10 @@ const MOCK_STRATEGIES = [
     initialToken1Amount: '800000000',            // 800 USDC
     initialValueUsd: 2150.00,                    // 0.5 * 2700 + 800
     openEthPriceUsd: 2700.00,
-    openTxHashes: [
+    openTxHashes: JSON.stringify([
       '0xoldopen1aaa111bbb222ccc333ddd444eee555fff666aaa111bbb222ccc3334',
       '0xoldopen2bbb222ccc333ddd444eee555fff666aaa111bbb222ccc333ddd4445',
-    ],
+    ]),
   },
 ]
 
@@ -125,10 +125,10 @@ const MOCK_STATS: Record<number, object> = {
     closeToken0Amount: '468000000000000000',   // 0.468 WETH withdrawn
     closeToken1Amount: '785000000',             // 785 USDC withdrawn
     closeValueUsd: 2104.76,                     // 0.468 * 2820 + 785
-    closeTxHashes: [
+    closeTxHashes: JSON.stringify([
       '0xclose1ccc333ddd444eee555fff666aaa111bbb222ccc333ddd444eee555fff6',
       '0xclose2ddd444eee555fff666aaa111bbb222ccc333ddd444eee555fff666aaa1',
-    ],
+    ]),
     totalPollTicks: 51840,
     inRangeTicks: 37325,
     timeInRangePct: 72.0,
@@ -148,7 +148,7 @@ const MOCK_REBALANCES_1 = [
       '0xr8tx3ccc333ddd444eee555fff666aaa111bbb222ccc333ddd444eee555fff6',
       '0xr8tx4ddd444eee555fff666aaa111bbb222ccc333ddd444eee555fff666aaa1',
     ]),
-    txSteps: ['Collect Fees', 'Remove Liquidity', 'Swap', 'Mint Position'],
+    txSteps: JSON.stringify(['Collect Fees', 'Remove Liquidity', 'Swap', 'Mint Position']),
     feesCollectedToken0: '1420000000000000',  // ~0.00142 WETH
     feesCollectedToken1: '4260000',            // ~4.26 USDC
     gasCostWei: '2300000000000000',
@@ -168,7 +168,7 @@ const MOCK_REBALANCES_1 = [
       '0xr7tx3aaa111bbb222ccc333ddd444eee555fff666aaa111bbb222ccc333ddd4',
       '0xr7tx4bbb222ccc333ddd444eee555fff666aaa111bbb222ccc333ddd444eee5',
     ]),
-    txSteps: ['Collect Fees', 'Remove Liquidity', 'Swap', 'Mint Position'],
+    txSteps: JSON.stringify(['Collect Fees', 'Remove Liquidity', 'Swap', 'Mint Position']),
     feesCollectedToken0: '1180000000000000',
     feesCollectedToken1: '3540000',
     gasCostWei: '2450000000000000',
@@ -188,7 +188,7 @@ const MOCK_REBALANCES_1 = [
       '0xr6tx3eee555fff666aaa111bbb222ccc333ddd444eee555fff666aaa111bbb2',
       '0xr6tx4fff666aaa111bbb222ccc333ddd444eee555fff666aaa111bbb222ccc3',
     ]),
-    txSteps: ['Collect Fees', 'Remove Liquidity', 'Swap', 'Mint Position'],
+    txSteps: JSON.stringify(['Collect Fees', 'Remove Liquidity', 'Swap', 'Mint Position']),
     feesCollectedToken0: '1350000000000000',
     feesCollectedToken1: '4050000',
     gasCostWei: '2200000000000000',
@@ -221,7 +221,7 @@ const MOCK_REBALANCES_1 = [
       '0xr4tx3ccc333ddd444eee555fff666aaa111bbb222ccc333ddd444eee555fff6',
       '0xr4tx4ddd444eee555fff666aaa111bbb222ccc333ddd444eee555fff666aaa1',
     ]),
-    txSteps: ['Collect Fees', 'Remove Liquidity', 'Swap', 'Mint Position'],
+    txSteps: JSON.stringify(['Collect Fees', 'Remove Liquidity', 'Swap', 'Mint Position']),
     feesCollectedToken0: '1290000000000000',
     feesCollectedToken1: '3870000',
     gasCostWei: '2350000000000000',
@@ -241,7 +241,7 @@ const MOCK_REBALANCES_1 = [
       '0xr3tx3aaa111bbb222ccc333ddd444eee555fff666aaa111bbb222ccc333ddd4',
       '0xr3tx4bbb222ccc333ddd444eee555fff666aaa111bbb222ccc333ddd444eee5',
     ]),
-    txSteps: ['Collect Fees', 'Remove Liquidity', 'Swap', 'Mint Position'],
+    txSteps: JSON.stringify(['Collect Fees', 'Remove Liquidity', 'Swap', 'Mint Position']),
     feesCollectedToken0: '1640000000000000',
     feesCollectedToken1: '4920000',
     gasCostWei: '2600000000000000',
@@ -261,7 +261,7 @@ const MOCK_REBALANCES_1 = [
       '0xr2tx3eee555fff666aaa111bbb222ccc333ddd444eee555fff666aaa111bbb2',
       '0xr2tx4fff666aaa111bbb222ccc333ddd444eee555fff666aaa111bbb222ccc3',
     ]),
-    txSteps: ['Collect Fees', 'Remove Liquidity', 'Swap', 'Mint Position'],
+    txSteps: JSON.stringify(['Collect Fees', 'Remove Liquidity', 'Swap', 'Mint Position']),
     feesCollectedToken0: '1520000000000000',
     feesCollectedToken1: '4560000',
     gasCostWei: '2100000000000000',
@@ -281,7 +281,7 @@ const MOCK_REBALANCES_1 = [
       '0xr1tx3ccc333ddd444eee555fff666aaa111bbb222ccc333ddd444eee555fff6',
       '0xr1tx4ddd444eee555fff666aaa111bbb222ccc333ddd444eee555fff666aaa1',
     ]),
-    txSteps: ['Collect Fees', 'Remove Liquidity', 'Swap', 'Mint Position'],
+    txSteps: JSON.stringify(['Collect Fees', 'Remove Liquidity', 'Swap', 'Mint Position']),
     feesCollectedToken0: '1440000000000000',
     feesCollectedToken1: '4320000',
     gasCostWei: '2400000000000000',
@@ -305,7 +305,7 @@ const MOCK_REBALANCES_2 = [
       '0xs20tx3ccc333ddd444eee555fff666aaa111bbb222ccc333ddd444eee555ff',
       '0xs20tx4ddd444eee555fff666aaa111bbb222ccc333ddd444eee555fff666aa',
     ]),
-    txSteps: ['Collect Fees', 'Remove Liquidity', 'Swap', 'Mint Position'],
+    txSteps: JSON.stringify(['Collect Fees', 'Remove Liquidity', 'Swap', 'Mint Position']),
     feesCollectedToken0: '2100000000000000',
     feesCollectedToken1: '6300000',
     gasCostWei: '2800000000000000',
@@ -325,7 +325,7 @@ const MOCK_REBALANCES_2 = [
       '0xs19tx3aaa111bbb222ccc333ddd444eee555fff666aaa111bbb222ccc333dd',
       '0xs19tx4bbb222ccc333ddd444eee555fff666aaa111bbb222ccc333ddd444ee',
     ]),
-    txSteps: ['Collect Fees', 'Remove Liquidity', 'Swap', 'Mint Position'],
+    txSteps: JSON.stringify(['Collect Fees', 'Remove Liquidity', 'Swap', 'Mint Position']),
     feesCollectedToken0: '1950000000000000',
     feesCollectedToken1: '5850000',
     gasCostWei: '2650000000000000',

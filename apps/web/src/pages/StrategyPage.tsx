@@ -328,12 +328,15 @@ function OpenedEvent({ strategy, dec0, dec1, label0, label1, expanded, onToggle,
           )}
         </div>
 
-        {strategy.openTxHashes && strategy.openTxHashes.length > 0 && (
-          <div className="bg-white/60 border border-white/80 rounded-xl p-4">
-            <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-3">Transactions</p>
-            <TxList hashes={strategy.openTxHashes} steps={['Approve', 'Mint Position']} />
-          </div>
-        )}
+        {strategy.openTxHashes && (() => {
+          const openHashes: string[] = JSON.parse(strategy.openTxHashes)
+          return openHashes.length > 0 && (
+            <div className="bg-white/60 border border-white/80 rounded-xl p-4">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-3">Transactions</p>
+              <TxList hashes={openHashes} steps={['Approve', 'Mint Position']} />
+            </div>
+          )
+        })()}
       </div>
     </TimelineEventRow>
   )
@@ -360,6 +363,7 @@ function RebalanceEventRow({ event, index, dec0, dec1, label0, label1, expanded,
   }
 
   const hashes = event.txHashes ? JSON.parse(event.txHashes) as string[] : []
+  const steps = event.txSteps ? JSON.parse(event.txSteps) as string[] : null
 
   const posBefore = (event.positionToken0Start && event.positionToken1Start && ethPrice > 0) ? (() => {
     const t0 = rawToFloat(event.positionToken0Start!, dec0)
@@ -506,7 +510,7 @@ function RebalanceEventRow({ event, index, dec0, dec1, label0, label1, expanded,
         {hashes.length > 0 && (
           <div className="bg-white/60 border border-white/80 rounded-xl p-3">
             <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2.5">Transactions</p>
-            <TxList hashes={hashes} steps={event.txSteps} />
+            <TxList hashes={hashes} steps={steps} />
           </div>
         )}
       </div>
@@ -622,12 +626,15 @@ function ClosedEvent({ strategy, stats, dec0, dec1, label0, label1, expanded, on
           )}
         </div>
 
-        {stats.closeTxHashes && stats.closeTxHashes.length > 0 && (
-          <div className="bg-white/60 border border-white/80 rounded-xl p-3">
-            <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2.5">Transactions</p>
-            <TxList hashes={stats.closeTxHashes} steps={['Collect Fees', 'Remove Liquidity']} />
-          </div>
-        )}
+        {stats.closeTxHashes && (() => {
+          const closeHashes: string[] = JSON.parse(stats.closeTxHashes)
+          return closeHashes.length > 0 && (
+            <div className="bg-white/60 border border-white/80 rounded-xl p-3">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2.5">Transactions</p>
+              <TxList hashes={closeHashes} steps={['Remove Liquidity', 'Collect Tokens', 'Burn NFT', 'Unwrap WETH']} />
+            </div>
+          )
+        })()}
       </div>
     </TimelineEventRow>
   )

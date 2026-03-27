@@ -43,7 +43,7 @@ export interface Strategy {
   initialToken1Amount: string | null
   initialValueUsd: number | null
   openEthPriceUsd: number | null
-  openTxHashes: string[] | null
+  openTxHashes: string | null   // JSON array string
 }
 
 export interface StrategyStats {
@@ -60,7 +60,7 @@ export interface StrategyStats {
   closeToken0Amount: string | null
   closeToken1Amount: string | null
   closeValueUsd: number | null
-  closeTxHashes: string[] | null
+  closeTxHashes: string | null   // JSON array string
   totalPollTicks: number
   inRangeTicks: number
   timeInRangePct: number
@@ -77,7 +77,7 @@ export interface RebalanceEvent {
   newTickUpper: number | null
   newTokenId: string | null
   txHashes: string | null
-  txSteps: string[] | null
+  txSteps: string | null         // JSON array string
   feesCollectedToken0: string | null
   feesCollectedToken1: string | null
   gasCostWei: string | null

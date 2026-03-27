@@ -18,12 +18,17 @@ data class StrategyRecord(
     val token0: String,
     val token1: String,
     val fee: Int,
+    val token0Decimals: Int,
+    val token1Decimals: Int,
     val rangePercent: Double,
     val slippageTolerance: Double,
     val pollIntervalSeconds: Long,
     val status: String,
     val createdAt: String,
     val stoppedAt: String?,
+    val initialToken0Amount: String?,
+    val initialToken1Amount: String?,
+    val initialValueUsd: Double?,
 )
 
 @Serializable
@@ -34,6 +39,10 @@ data class StrategyStatsDto(
     val feesCollectedToken1: String,
     val gasCostWei: String,
     val gasCostUsd: Double,
+    val feesCollectedUsd: Double,
+    val closeEthPriceUsd: Double?,
+    val closeFeesUsd: Double?,
+    val closeGasUsd: Double?,
     val totalPollTicks: Int,
     val inRangeTicks: Int,
     val timeInRangePct: Double,
@@ -51,9 +60,14 @@ class StrategyService {
         token0: String,
         token1: String,
         fee: Int,
+        token0Decimals: Int = 18,
+        token1Decimals: Int = 6,
         rangePercent: Double = 0.05,
         slippageTolerance: Double = 0.005,
         pollIntervalSeconds: Long = 60,
+        initialToken0Amount: String? = null,
+        initialToken1Amount: String? = null,
+        initialValueUsd: Double? = null,
     ): StrategyRecord = transaction {
         val activeCount = Strategies.selectAll()
             .where { (Strategies.userId eq userId) and (Strategies.status eq "active") }
@@ -68,12 +82,17 @@ class StrategyService {
             it[Strategies.token0] = token0
             it[Strategies.token1] = token1
             it[Strategies.fee] = fee
+            it[Strategies.token0Decimals] = token0Decimals
+            it[Strategies.token1Decimals] = token1Decimals
             it[Strategies.rangePercent] = rangePercent
             it[Strategies.slippageTolerance] = slippageTolerance
             it[Strategies.pollIntervalSeconds] = pollIntervalSeconds
             it[status] = "active"
             it[createdAt] = now
             it[stoppedAt] = null
+            it[Strategies.initialToken0Amount] = initialToken0Amount
+            it[Strategies.initialToken1Amount] = initialToken1Amount
+            it[Strategies.initialValueUsd] = initialValueUsd
         } get Strategies.id
 
         // Create empty stats row
@@ -103,24 +122,6 @@ class StrategyService {
             .where { Strategies.userId eq userId }
             .orderBy(Strategies.createdAt, SortOrder.DESC)
             .map { rowToRecord(it) }
-    }
-
-    fun pause(strategyId: Int, userId: Int): Boolean = transaction {
-        Strategies.update({ (Strategies.id eq strategyId) and (Strategies.userId eq userId) and (Strategies.status eq "active") }) {
-            it[status] = "paused"
-        } > 0
-    }
-
-    fun resume(strategyId: Int, userId: Int): Boolean = transaction {
-        // Ensure no other active strategy exists
-        val activeCount = Strategies.selectAll()
-            .where { (Strategies.userId eq userId) and (Strategies.status eq "active") and (Strategies.id neq strategyId) }
-            .count()
-        require(activeCount == 0L) { "Stop or pause your other active strategy first." }
-
-        Strategies.update({ (Strategies.id eq strategyId) and (Strategies.userId eq userId) and (Strategies.status eq "paused") }) {
-            it[status] = "active"
-        } > 0
     }
 
     fun stop(strategyId: Int, userId: Int): Boolean = transaction {
@@ -178,13 +179,38 @@ class StrategyService {
             .toBigDecimal().divide(java.math.BigDecimal("1000000000000000000"))
         val newGasUsd = row[StrategyStats.gasCostUsd] + gasEth.toDouble() * ethPriceUsd
 
+        // Compute fees in USD using token decimals from the strategy record
+        val strategy = Strategies.selectAll().where { Strategies.id eq strategyId }.firstOrNull()
+        val dec0 = strategy?.get(Strategies.token0Decimals) ?: 18
+        val dec1 = strategy?.get(Strategies.token1Decimals) ?: 6
+        val fee0 = (feesToken0.toBigIntegerOrNull() ?: java.math.BigInteger.ZERO)
+            .toBigDecimal().divide(java.math.BigDecimal.TEN.pow(dec0))
+        val fee1 = (feesToken1.toBigIntegerOrNull() ?: java.math.BigInteger.ZERO)
+            .toBigDecimal().divide(java.math.BigDecimal.TEN.pow(dec1))
+        // token0 is WETH (18 dec) → multiply by ETH price; token1 is USDC (6 dec) → face value
+        val feesUsd = if (dec0 == 18) fee0.toDouble() * ethPriceUsd + fee1.toDouble()
+                      else fee1.toDouble() * ethPriceUsd + fee0.toDouble()
+        val newFeesUsd = row[StrategyStats.feesCollectedUsd] + feesUsd
+
         StrategyStats.update({ StrategyStats.strategyId eq strategyId }) {
             it[totalRebalances] = row[StrategyStats.totalRebalances] + 1
             it[feesCollectedToken0] = newFees0.toString()
             it[feesCollectedToken1] = newFees1.toString()
             it[gasCostWei] = newGas.toString()
             it[gasCostUsd] = newGasUsd
+            it[feesCollectedUsd] = newFeesUsd
             it[updatedAt] = now
+        }
+    }
+
+    /** Snapshot fees, gas, and ETH price at the moment a strategy is stopped */
+    fun recordClose(strategyId: Int, closeEthPriceUsd: Double) = transaction {
+        val stats = StrategyStats.selectAll().where { StrategyStats.strategyId eq strategyId }.firstOrNull()
+            ?: return@transaction
+        StrategyStats.update({ StrategyStats.strategyId eq strategyId }) {
+            it[StrategyStats.closeEthPriceUsd] = closeEthPriceUsd
+            it[StrategyStats.closeFeesUsd] = stats[StrategyStats.feesCollectedUsd]
+            it[StrategyStats.closeGasUsd] = stats[StrategyStats.gasCostUsd]
         }
     }
 
@@ -213,6 +239,10 @@ class StrategyService {
             feesCollectedToken1 = stats[StrategyStats.feesCollectedToken1],
             gasCostWei = stats[StrategyStats.gasCostWei],
             gasCostUsd = stats[StrategyStats.gasCostUsd],
+            feesCollectedUsd = stats[StrategyStats.feesCollectedUsd],
+            closeEthPriceUsd = stats[StrategyStats.closeEthPriceUsd],
+            closeFeesUsd = stats[StrategyStats.closeFeesUsd],
+            closeGasUsd = stats[StrategyStats.closeGasUsd],
             totalPollTicks = stats[StrategyStats.totalPollTicks],
             inRangeTicks = stats[StrategyStats.inRangeTicks],
             timeInRangePct = stats[StrategyStats.timeInRangePct],
@@ -264,12 +294,17 @@ class StrategyService {
         token0 = row[Strategies.token0],
         token1 = row[Strategies.token1],
         fee = row[Strategies.fee],
+        token0Decimals = row[Strategies.token0Decimals],
+        token1Decimals = row[Strategies.token1Decimals],
         rangePercent = row[Strategies.rangePercent],
         slippageTolerance = row[Strategies.slippageTolerance],
         pollIntervalSeconds = row[Strategies.pollIntervalSeconds],
         status = row[Strategies.status],
         createdAt = row[Strategies.createdAt].toString(),
         stoppedAt = row[Strategies.stoppedAt]?.toString(),
+        initialToken0Amount = row[Strategies.initialToken0Amount],
+        initialToken1Amount = row[Strategies.initialToken1Amount],
+        initialValueUsd = row[Strategies.initialValueUsd],
     )
 }
 

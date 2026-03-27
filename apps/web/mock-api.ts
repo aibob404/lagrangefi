@@ -36,12 +36,17 @@ const MOCK_STRATEGIES = [
     token0: '0x82af49447d8a07e3bd95bd0d56f35241523fbab1', // WETH (lower address = token0)
     token1: '0xaf88d065e77c8cc2239327c5edb3a432268e5831', // USDC
     fee: 500,
+    token0Decimals: 18,
+    token1Decimals: 6,
     rangePercent: 10,
     slippageTolerance: 0.5,
     pollIntervalSeconds: 60,
     status: 'active',
     createdAt: new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString(),
     stoppedAt: null,
+    initialToken0Amount: '250000000000000000',  // 0.25 WETH
+    initialToken1Amount: '500000000',           // 500 USDC
+    initialValueUsd: 1355.88,                   // 0.25 * 2823.50 + 500
   },
 ]
 
@@ -52,6 +57,10 @@ const MOCK_STATS = {
   feesCollectedToken1: '12340000',          // USDC (6 decimals)  ~12.34 USDC
   gasCostWei: '8200000000000000',
   gasCostUsd: 27.83, // ~0.0082 ETH * ~$3400
+  feesCollectedUsd: 29.18,
+  closeEthPriceUsd: null,
+  closeFeesUsd: null,
+  closeGasUsd: null,
   totalPollTicks: 1200,
   inRangeTicks: 980,
   timeInRangePct: 81.67,

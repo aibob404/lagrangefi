@@ -148,6 +148,21 @@ fun Application.configureRouting(
                         return@post call.respond(HttpStatusCode.ServiceUnavailable, mapOf("error" to "Position minted but could not fetch details: ${e.message}"))
                     }
 
+                    // Convert human-readable amounts to raw units and compute initial USD value
+                    val ethPrice = poolState.price.toDoubleOrNull() ?: 0.0
+                    val initialToken0 = runCatching {
+                        java.math.BigDecimal(req.ethAmount)
+                            .multiply(java.math.BigDecimal.TEN.pow(poolState.decimals0))
+                            .toBigInteger().toString()
+                    }.getOrNull()
+                    val initialToken1 = runCatching {
+                        java.math.BigDecimal(req.usdcAmount)
+                            .multiply(java.math.BigDecimal.TEN.pow(poolState.decimals1))
+                            .toBigInteger().toString()
+                    }.getOrNull()
+                    val initialValueUsd = (req.ethAmount.toDoubleOrNull() ?: 0.0) * ethPrice +
+                            (req.usdcAmount.toDoubleOrNull() ?: 0.0)
+
                     try {
                         val strategy = strategyService.create(
                             userId = userId,
@@ -156,9 +171,14 @@ fun Application.configureRouting(
                             token0 = position.token0,
                             token1 = position.token1,
                             fee = position.fee,
+                            token0Decimals = poolState.decimals0,
+                            token1Decimals = poolState.decimals1,
                             rangePercent = req.rangePercent,
                             slippageTolerance = req.slippageTolerance,
                             pollIntervalSeconds = req.pollIntervalSeconds,
+                            initialToken0Amount = initialToken0,
+                            initialToken1Amount = initialToken1,
+                            initialValueUsd = initialValueUsd,
                         )
                         scheduler.start(strategy)
                         call.respond(HttpStatusCode.Created, StartStrategyResponseDto(
@@ -177,11 +197,16 @@ fun Application.configureRouting(
                     }
                     val req = call.receive<CreateStrategyRequestDto>()
 
-                    // Resolve token0/token1/fee from the chain service
+                    // Resolve token0/token1/fee and decimals from the chain service
                     val position = try {
                         chainClient.getPosition(req.tokenId)
                     } catch (e: Exception) {
                         return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Could not fetch position from chain: ${e.message}"))
+                    }
+                    val poolState = try {
+                        chainClient.getPoolState(req.tokenId)
+                    } catch (e: Exception) {
+                        null // non-fatal: decimals fall back to defaults
                     }
 
                     try {
@@ -192,6 +217,8 @@ fun Application.configureRouting(
                             token0 = position.token0,
                             token1 = position.token1,
                             fee = position.fee,
+                            token0Decimals = poolState?.decimals0 ?: 18,
+                            token1Decimals = poolState?.decimals1 ?: 6,
                             rangePercent = req.rangePercent,
                             slippageTolerance = req.slippageTolerance,
                             pollIntervalSeconds = req.pollIntervalSeconds,
@@ -212,31 +239,6 @@ fun Application.configureRouting(
                     call.respond(strategy)
                 }
 
-                patch("/strategies/{id}/pause") {
-                    val userId = call.getUserId()
-                    val strategyId = call.parameters["id"]?.toIntOrNull()
-                        ?: return@patch call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid strategy id"))
-                    val ok = strategyService.pause(strategyId, userId)
-                    if (!ok) return@patch call.respond(HttpStatusCode.NotFound, mapOf("error" to "Strategy not found or not active"))
-                    scheduler.stop(strategyId)
-                    call.respond(mapOf("status" to "paused"))
-                }
-
-                patch("/strategies/{id}/resume") {
-                    val userId = call.getUserId()
-                    val strategyId = call.parameters["id"]?.toIntOrNull()
-                        ?: return@patch call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid strategy id"))
-                    try {
-                        val ok = strategyService.resume(strategyId, userId)
-                        if (!ok) return@patch call.respond(HttpStatusCode.NotFound, mapOf("error" to "Strategy not found or not paused"))
-                        val strategy = strategyService.findById(strategyId, userId)!!
-                        scheduler.start(strategy)
-                        call.respond(mapOf("status" to "active"))
-                    } catch (e: IllegalArgumentException) {
-                        call.respond(HttpStatusCode.Conflict, mapOf("error" to e.message))
-                    }
-                }
-
                 delete("/strategies/{id}") {
                     val userId = call.getUserId()
                     val strategyId = call.parameters["id"]?.toIntOrNull()
@@ -244,6 +246,15 @@ fun Application.configureRouting(
                     val ok = strategyService.stop(strategyId, userId)
                     if (!ok) return@delete call.respond(HttpStatusCode.NotFound, mapOf("error" to "Strategy not found"))
                     scheduler.stop(strategyId)
+                    // Snapshot fees/gas at historical ETH price when strategy is stopped
+                    try {
+                        val strategy = strategyService.findById(strategyId, userId)
+                        if (strategy != null) {
+                            val poolState = chainClient.getPoolByPair(WETH, USDC, strategy.fee)
+                            val closeEthPrice = poolState.price.toDoubleOrNull() ?: 0.0
+                            strategyService.recordClose(strategyId, closeEthPrice)
+                        }
+                    } catch (_: Exception) { /* non-fatal */ }
                     call.respond(mapOf("status" to "stopped"))
                 }
 

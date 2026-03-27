@@ -17,7 +17,7 @@ export interface PoolState {
   decimals1: number
 }
 
-export type StrategyStatus = 'active' | 'paused' | 'stopped'
+export type StrategyStatus = 'active' | 'stopped'
 
 export interface Strategy {
   id: number
@@ -27,12 +27,17 @@ export interface Strategy {
   token0: string
   token1: string
   fee: number
+  token0Decimals: number
+  token1Decimals: number
   rangePercent: number
   slippageTolerance: number
   pollIntervalSeconds: number
   status: StrategyStatus
   createdAt: string
   stoppedAt: string | null
+  initialToken0Amount: string | null
+  initialToken1Amount: string | null
+  initialValueUsd: number | null
 }
 
 export interface StrategyStats {
@@ -42,6 +47,10 @@ export interface StrategyStats {
   feesCollectedToken1: string
   gasCostWei: string
   gasCostUsd: number
+  feesCollectedUsd: number
+  closeEthPriceUsd: number | null
+  closeFeesUsd: number | null
+  closeGasUsd: number | null
   totalPollTicks: number
   inRangeTicks: number
   timeInRangePct: number

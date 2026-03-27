@@ -161,75 +161,85 @@ export async function rebalance(req: RebalanceRequest): Promise<RebalanceResult>
     args: [tokenId],
   })
   const liquidity = position[7]
+  const tokensOwed0 = position[10]
+  const tokensOwed1 = position[11]
 
-  if (liquidity === 0n) {
-    return { success: false, txHashes: [], error: 'Position has no liquidity' }
-  }
-
-  // 2. Simulate decreaseLiquidity first to capture principal amounts (fees = total_collected - principal)
-  const decreaseParams = {
-    tokenId,
-    liquidity,
-    amount0Min: 0n,
-    amount1Min: 0n,
-    deadline,
-  }
   let principal0 = 0n
   let principal1 = 0n
-  try {
-    const sim = await publicClient.simulateContract({
+
+  if (liquidity > 0n) {
+    // 2. Simulate decreaseLiquidity first to capture principal amounts (fees = total_collected - principal)
+    const decreaseParams = {
+      tokenId,
+      liquidity,
+      amount0Min: 0n,
+      amount1Min: 0n,
+      deadline,
+    }
+    try {
+      const sim = await publicClient.simulateContract({
+        address: POSITION_MANAGER,
+        abi: POSITION_MANAGER_ABI,
+        functionName: 'decreaseLiquidity',
+        account: account.address,
+        args: [decreaseParams],
+      })
+      principal0 = sim.result[0]
+      principal1 = sim.result[1]
+    } catch {
+      // If simulation fails, fees will be 0 (conservative fallback — principal unknown)
+    }
+
+    // Remove all liquidity
+    const decreaseTx = await walletClient.writeContract({
       address: POSITION_MANAGER,
       abi: POSITION_MANAGER_ABI,
       functionName: 'decreaseLiquidity',
-      account: account.address,
       args: [decreaseParams],
     })
-    principal0 = sim.result[0]
-    principal1 = sim.result[1]
-  } catch {
-    // If simulation fails, fees will be 0 (conservative fallback — principal unknown)
+    const decreaseReceipt = await publicClient.waitForTransactionReceipt({ hash: decreaseTx })
+    txHashes.push(decreaseTx)
+    receipts.push(decreaseReceipt)
+    if (decreaseReceipt.status === 'reverted') {
+      throw new Error(`decreaseLiquidity reverted (tx: ${decreaseTx})`)
+    }
   }
+  // If liquidity === 0: a previous rebalance removed liquidity but failed before minting.
+  // Tokens may be stranded as tokensOwed in the position manager, or already in the wallet.
+  // Either way, fall through to collect + re-mint.
 
-  // Remove all liquidity
-  const decreaseTx = await walletClient.writeContract({
-    address: POSITION_MANAGER,
-    abi: POSITION_MANAGER_ABI,
-    functionName: 'decreaseLiquidity',
-    args: [decreaseParams],
-  })
-  const decreaseReceipt = await publicClient.waitForTransactionReceipt({ hash: decreaseTx })
-  txHashes.push(decreaseTx)
-  receipts.push(decreaseReceipt)
+  // From this point on, liquidity has been removed. If anything below fails, we must collect
+  // any stranded tokens back to the wallet so they are never left in the contract.
+  let feesCollected: FeesCollected | undefined
 
-  // From this point on, liquidity has been removed from the pool and tokens are owed to this
-  // position in the NonfungiblePositionManager. If anything below fails, we must collect those
-  // tokens back to the wallet so they are never left stranded in the contract.
   try {
 
-  // 3. Collect all tokens (includes accrued LP fees + withdrawn liquidity)
-  const collectTx = await walletClient.writeContract({
-    address: POSITION_MANAGER,
-    abi: POSITION_MANAGER_ABI,
-    functionName: 'collect',
-    args: [{
-      tokenId,
-      recipient: account.address,
-      amount0Max: MAX_UINT128,
-      amount1Max: MAX_UINT128,
-    }],
-  })
-  const collectReceipt = await publicClient.waitForTransactionReceipt({ hash: collectTx })
-  txHashes.push(collectTx)
-  receipts.push(collectReceipt)
+  // 3. Collect tokens if any are owed (LP fees + withdrawn liquidity, or stranded from prior attempt)
+  if (liquidity > 0n || tokensOwed0 > 0n || tokensOwed1 > 0n) {
+    const collectTx = await walletClient.writeContract({
+      address: POSITION_MANAGER,
+      abi: POSITION_MANAGER_ABI,
+      functionName: 'collect',
+      args: [{
+        tokenId,
+        recipient: account.address,
+        amount0Max: MAX_UINT128,
+        amount1Max: MAX_UINT128,
+      }],
+    })
+    const collectReceipt = await publicClient.waitForTransactionReceipt({ hash: collectTx })
+    txHashes.push(collectTx)
+    receipts.push(collectReceipt)
 
-  // Parse total collected from Collect event, then subtract principal to get LP fees only
-  const totalCollected = parseTotalCollected(collectReceipt)
-  const feesCollected: FeesCollected | undefined = totalCollected
-    ? {
-        amount0: (totalCollected.amount0 > principal0 ? totalCollected.amount0 - principal0 : 0n).toString(),
-        amount1: (totalCollected.amount1 > principal1 ? totalCollected.amount1 - principal1 : 0n).toString(),
-      }
-    : undefined
+    // Parse total collected from Collect event, then subtract principal to get LP fees only
+    const totalCollected = parseTotalCollected(collectReceipt)
+    feesCollected = totalCollected
+      ? {
+          amount0: (totalCollected.amount0 > principal0 ? totalCollected.amount0 - principal0 : 0n).toString(),
+          amount1: (totalCollected.amount1 > principal1 ? totalCollected.amount1 - principal1 : 0n).toString(),
+        }
+      : undefined
+  }
 
   // 4. Extract position token addresses and fee
   const token0 = position[2] as `0x${string}`

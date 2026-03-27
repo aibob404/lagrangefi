@@ -414,7 +414,7 @@ export default function StrategyPage() {
     setStoppingId(id)
     try {
       await stopStrategy(id)
-      setConfirmStopId(null); setExpandedId(null); load()
+      setConfirmStopId(null); setExpandedId(null); closeCreate(); load()
     } finally {
       setStoppingId(null)
     }
@@ -584,7 +584,7 @@ export default function StrategyPage() {
                       )}
                     </div>
                     <div className="relative">
-                      <input type="number" min="0" step="1" placeholder="0.0" value={usdcAmount}
+                      <input type="number" min="0" step="any" placeholder="0.0" value={usdcAmount}
                         onChange={e => setUsdcAmount(e.target.value)}
                         className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:border-blue-500 focus:bg-white pr-14" />
                       <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-400 font-medium">USDC</span>

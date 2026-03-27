@@ -28,9 +28,7 @@ function tokenLabel(addr: string) {
 }
 function feeLabel(fee: number) { return (fee / 10000).toFixed(2) + '%' }
 function shortHash(h: string) { return h.slice(0, 8) + '…' + h.slice(-6) }
-function tokenDecimals(addr: string) {
-  return (TOKEN_LABELS[addr.toLowerCase()] ?? '').includes('USDC') ? 6 : 18
-}
+
 function tickToPrice(tick: number, d0: number, d1: number) {
   return Math.pow(1.0001, tick) * Math.pow(10, d0 - d1)
 }
@@ -120,38 +118,6 @@ function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
   )
 }
 
-function CardHeader({ label, color }: { label: string; color?: 'emerald' | 'blue' | 'violet' | 'gray' }) {
-  const bar =
-    color === 'emerald' ? 'from-emerald-400 to-teal-400' :
-    color === 'blue'    ? 'from-blue-400 to-sky-400' :
-    color === 'violet'  ? 'from-violet-400 to-purple-400' :
-    'from-gray-300 to-gray-400'
-  return (
-    <div className="flex items-center gap-2 mb-4">
-      <div className={`w-0.5 h-4 rounded-full bg-gradient-to-b ${bar} shrink-0`} />
-      <h3 className="text-xs font-bold uppercase tracking-widest text-gray-500">{label}</h3>
-    </div>
-  )
-}
-
-function MetricCard({ label, value, sub, accent }: {
-  label: string; value: React.ReactNode; sub?: React.ReactNode
-  accent?: 'green' | 'red' | 'blue' | 'amber'
-}) {
-  const color =
-    accent === 'green' ? 'text-emerald-600' :
-    accent === 'red'   ? 'text-red-500' :
-    accent === 'blue'  ? 'text-blue-600' :
-    accent === 'amber' ? 'text-amber-500' :
-    'text-gray-900'
-  return (
-    <div className="bg-white/50 backdrop-blur-sm border border-white/70 rounded-2xl p-4 shadow-sm">
-      <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">{label}</p>
-      <p className={`text-2xl font-bold tracking-tight ${color}`}>{value}</p>
-      {sub && <p className="text-xs text-gray-500 mt-1">{sub}</p>}
-    </div>
-  )
-}
 
 function PriceRangeBar({ tick, tickLower, tickUpper, decimals0, decimals1 }: {
   tick: number; tickLower: number; tickUpper: number; decimals0: number; decimals1: number

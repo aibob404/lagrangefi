@@ -327,6 +327,7 @@ export default function StrategyPage() {
   const [expandedId,    setExpandedId]  = useState<number | null>(null)
   const [tabMap,        setTabMap]      = useState<Record<number, 'overview' | 'history'>>({})
   const [confirmStopId, setConfirmStopId] = useState<number | null>(null)
+  const [stoppingId,    setStoppingId]    = useState<number | null>(null)
   const [error,         setError]       = useState<string | null>(null)
   const [walletBalances, setWalletBalances] = useState<WalletBalances | null>(null)
   const [lastUpdated,   setLastUpdated] = useState<Date | null>(null)
@@ -410,8 +411,13 @@ export default function StrategyPage() {
   }
 
   async function handleStop(id: number) {
-    await stopStrategy(id)
-    setConfirmStopId(null); setExpandedId(null); load()
+    setStoppingId(id)
+    try {
+      await stopStrategy(id)
+      setConfirmStopId(null); setExpandedId(null); load()
+    } finally {
+      setStoppingId(null)
+    }
   }
 
   async function handleCreate(e: FormEvent) {
@@ -491,11 +497,13 @@ export default function StrategyPage() {
         <div className="bg-white/60 backdrop-blur-xl rounded-2xl border border-white/70 shadow-lg shadow-black/5 p-6 mb-6">
           <div className="flex items-center justify-between mb-5">
             <h2 className="text-base font-semibold text-gray-900">New strategy</h2>
-            <button onClick={closeCreate} className="text-gray-400 hover:text-gray-600 transition-colors">
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
+            {formState !== 'submitting' && (
+              <button onClick={closeCreate} className="text-gray-400 hover:text-gray-600 transition-colors">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            )}
           </div>
 
           {formState === 'success' && successData && (
@@ -706,10 +714,12 @@ export default function StrategyPage() {
                     </>
                   ) : createMode === 'mint' ? 'Start strategy' : 'Register strategy'}
                 </button>
-                <button type="button" onClick={closeCreate}
-                  className="text-gray-500 hover:text-gray-900 text-sm font-medium px-4 py-2.5 rounded-xl border border-gray-200 hover:border-gray-300 bg-white/60 hover:bg-white/80 transition-all">
-                  Cancel
-                </button>
+                {formState !== 'submitting' && (
+                  <button type="button" onClick={closeCreate}
+                    className="text-gray-500 hover:text-gray-900 text-sm font-medium px-4 py-2.5 rounded-xl border border-gray-200 hover:border-gray-300 bg-white/60 hover:bg-white/80 transition-all">
+                    Cancel
+                  </button>
+                )}
               </div>
             </form>
           )}
@@ -783,19 +793,31 @@ export default function StrategyPage() {
                     )}
                     {confirmStopId === s.id && (
                       <div className="flex items-center gap-2 bg-white/80 backdrop-blur-md border border-red-100 rounded-xl px-3 py-1.5 shadow-lg shadow-red-500/10">
-                        <span className="text-xs text-gray-500 font-medium whitespace-nowrap">Stop permanently?</span>
-                        <button onClick={() => handleStop(s.id)}
+                        <span className="text-xs text-gray-500 font-medium whitespace-nowrap">
+                          {stoppingId === s.id ? 'Stopping…' : 'Stop permanently?'}
+                        </span>
+                        <button onClick={() => handleStop(s.id)} disabled={stoppingId === s.id}
                           className="inline-flex items-center gap-1 text-xs font-bold text-white
                                      bg-gradient-to-r from-red-500 to-rose-600
                                      hover:from-red-600 hover:to-rose-700
+                                     disabled:opacity-60 disabled:cursor-not-allowed
                                      px-3 py-1 rounded-lg shadow-sm shadow-red-500/30 transition-all hover:shadow-red-500/50 hover:shadow-md">
-                          <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
-                          Confirm
+                          {stoppingId === s.id ? (
+                            <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+                            </svg>
+                          ) : (
+                            <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+                          )}
+                          {stoppingId === s.id ? '' : 'Confirm'}
                         </button>
-                        <button onClick={() => setConfirmStopId(null)}
-                          className="text-xs font-medium text-gray-400 hover:text-gray-600 transition-colors">
-                          Cancel
-                        </button>
+                        {stoppingId !== s.id && (
+                          <button onClick={() => setConfirmStopId(null)}
+                            className="text-xs font-medium text-gray-400 hover:text-gray-600 transition-colors">
+                            Cancel
+                          </button>
+                        )}
                       </div>
                     )}
                     <svg

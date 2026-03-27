@@ -64,6 +64,7 @@ export interface RebalanceEvent {
   positionToken1Start: string | null
   positionToken0End: string | null
   positionToken1End: string | null
+  ethPriceUsd: string | null
   errorMessage: string | null
   triggeredAt: string
   completedAt: string | null

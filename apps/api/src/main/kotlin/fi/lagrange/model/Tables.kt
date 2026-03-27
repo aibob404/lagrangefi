@@ -72,6 +72,8 @@ object RebalanceEvents : Table("rebalance_events") {
     val positionToken1Start = varchar("position_token1_start", 78).nullable()
     val positionToken0End = varchar("position_token0_end", 78).nullable()
     val positionToken1End = varchar("position_token1_end", 78).nullable()
+    /** ETH price in USD (USDC per WETH) at the time of the rebalance, for tax reporting */
+    val ethPriceUsd = varchar("eth_price_usd", 32).nullable()
     val errorMessage = text("error_message").nullable()
     val triggeredAt = timestamp("triggered_at")
     val completedAt = timestamp("completed_at").nullable()

@@ -39,9 +39,27 @@ function formatUsd(n: number) {
   return n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 })
 }
 function weiToEth(wei: string) { return (Number(BigInt(wei)) / 1e18).toFixed(6) }
-function formatRaw(amount: string, decimals: number) {
+function formatRaw(amount: string, decimals: number, sigFigs = 6) {
   const n = BigInt(amount), d = 10n ** BigInt(decimals)
-  return `${n / d}.${(n % d).toString().padStart(decimals, '0').slice(0, 4)}`
+  const whole = n / d
+  const frac = (n % d).toString().padStart(decimals, '0')
+  // Show enough decimal places to have at least sigFigs significant figures
+  const leadingZeros = frac.match(/^0*/)?.[0].length ?? 0
+  const show = Math.max(sigFigs, leadingZeros + sigFigs)
+  return `${whole}.${frac.slice(0, show)}`
+}
+/** Format a raw token amount with optional USD equivalent: "0.001234 WETH ($4.57)" */
+function formatRawWithUsd(amount: string, decimals: number, label: string, ethPrice: number): string {
+  const val = Number(BigInt(amount)) / Math.pow(10, decimals)
+  const formatted = formatRaw(amount, decimals)
+  if (label.includes('WETH') && ethPrice > 0) {
+    const usd = val * ethPrice
+    return `${formatted} ${label} (${formatUsd(usd)})`
+  }
+  if (label.includes('USDC')) {
+    return `${formatted} ${label}`
+  }
+  return `${formatted} ${label}`
 }
 function daysRunning(createdAt: string) {
   return Math.floor((Date.now() - new Date(createdAt).getTime()) / 86_400_000)
@@ -138,8 +156,23 @@ function PriceRangeBar({ tick, tickLower, tickUpper, decimals0, decimals1 }: {
   )
 }
 
+function rebalanceFeesUsd(r: RebalanceEvent, dec0: number, dec1: number, label0: string): number | null {
+  if (!r.ethPriceUsd || !r.feesCollectedToken0 || !r.feesCollectedToken1) return null
+  const ethPrice = parseFloat(r.ethPriceUsd)
+  const fee0 = Number(BigInt(r.feesCollectedToken0)) / Math.pow(10, dec0)
+  const fee1 = Number(BigInt(r.feesCollectedToken1)) / Math.pow(10, dec1)
+  return label0.includes('WETH') ? fee0 * ethPrice + fee1 : fee1 * ethPrice + fee0
+}
+
+function positionUsd(token0raw: string, token1raw: string, dec0: number, dec1: number, label0: string, ethPrice: number): number {
+  const t0 = Number(BigInt(token0raw)) / Math.pow(10, dec0)
+  const t1 = Number(BigInt(token1raw)) / Math.pow(10, dec1)
+  return label0.includes('WETH') ? t0 * ethPrice + t1 : t1 * ethPrice + t0
+}
+
 function RebalanceTable({ events, token0, token1 }: { events: RebalanceEvent[]; token0: string; token1: string }) {
   const dec0 = tokenDecimals(token0), dec1 = tokenDecimals(token1)
+  const label0 = tokenLabel(token0), label1 = tokenLabel(token1)
   if (events.length === 0)
     return <p className="text-gray-400 text-sm text-center py-6">No rebalances yet</p>
   return (
@@ -147,49 +180,76 @@ function RebalanceTable({ events, token0, token1 }: { events: RebalanceEvent[]; 
       <table className="w-full text-xs">
         <thead>
           <tr className="text-gray-400 border-b border-gray-100">
-            {['Time', 'Status', 'New Range', 'Fees', 'Gas (ETH)', 'Tx'].map(h => (
-              <th key={h} className="text-left pb-2.5 font-semibold">{h}</th>
+            {['Time', 'Status', 'New Range', 'LP Fees', 'LP Value (start→end)', 'Gas', 'Tx'].map(h => (
+              <th key={h} className="text-left pb-2.5 font-semibold pr-4">{h}</th>
             ))}
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-50">
-          {events.map(r => (
-            <tr key={r.id} className={`transition-colors ${r.status === 'failed' ? 'bg-red-50/40' : 'hover:bg-white/30'}`}>
-              <td className="py-2 text-gray-500 font-mono whitespace-nowrap">
-                {new Date(r.triggeredAt).toLocaleString()}
-              </td>
-              <td className="py-2">
-                <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${
-                  r.status === 'success' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
-                  r.status === 'failed'  ? 'bg-red-50 text-red-700 border border-red-200' :
-                  'bg-amber-50 text-amber-700 border border-amber-200'
-                }`}>{r.status}</span>
-              </td>
-              <td className="py-2 text-gray-600 font-mono">
-                {r.newTickLower != null
-                  ? `$${formatPrice(tickToPrice(r.newTickLower, dec0, dec1))} → $${formatPrice(tickToPrice(r.newTickUpper!, dec0, dec1))}`
-                  : <span className="text-red-400">{r.errorMessage ?? '—'}</span>}
-              </td>
-              <td className="py-2 text-gray-500 font-mono">
-                {r.feesCollectedToken0 != null
-                  ? `${formatRaw(r.feesCollectedToken0, dec0)} ${tokenLabel(token0)}`
-                  : '—'}
-              </td>
-              <td className="py-2 text-gray-500 font-mono">
-                {r.gasCostWei != null ? weiToEth(r.gasCostWei) : '—'}
-              </td>
-              <td className="py-2">
-                {r.txHashes
-                  ? JSON.parse(r.txHashes).slice(0, 1).map((h: string) => (
-                    <a key={h} href={`https://arbiscan.io/tx/${h}`} target="_blank" rel="noopener noreferrer"
-                      className="text-blue-600 hover:text-blue-700 font-mono underline underline-offset-2">
-                      {shortHash(h)}
-                    </a>
-                  ))
-                  : <span className="text-gray-400">—</span>}
-              </td>
-            </tr>
-          ))}
+          {events.map(r => {
+            const ethPrice = r.ethPriceUsd ? parseFloat(r.ethPriceUsd) : 0
+            const feesUsd = rebalanceFeesUsd(r, dec0, dec1, label0)
+            const hasLp = r.positionToken0Start && r.positionToken1Start && r.positionToken0End && r.positionToken1End && ethPrice > 0
+            return (
+              <tr key={r.id} className={`transition-colors ${r.status === 'failed' ? 'bg-red-50/40' : 'hover:bg-white/30'}`}>
+                <td className="py-2.5 text-gray-500 font-mono whitespace-nowrap pr-4">
+                  {new Date(r.triggeredAt).toLocaleString()}
+                </td>
+                <td className="py-2.5 pr-4">
+                  <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${
+                    r.status === 'success' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
+                    r.status === 'failed'  ? 'bg-red-50 text-red-700 border border-red-200' :
+                    'bg-amber-50 text-amber-700 border border-amber-200'
+                  }`}>{r.status}</span>
+                </td>
+                <td className="py-2.5 text-gray-600 font-mono pr-4">
+                  {r.newTickLower != null
+                    ? `$${formatPrice(tickToPrice(r.newTickLower, dec0, dec1))} → $${formatPrice(tickToPrice(r.newTickUpper!, dec0, dec1))}`
+                    : <span className="text-red-400">{r.errorMessage ?? '—'}</span>}
+                </td>
+                <td className="py-2.5 text-gray-600 font-mono pr-4">
+                  {r.feesCollectedToken0 != null ? (
+                    <div className="space-y-0.5">
+                      <div>{formatRaw(r.feesCollectedToken0, dec0)} {label0}</div>
+                      <div>{formatRaw(r.feesCollectedToken1 ?? '0', dec1)} {label1}</div>
+                      {feesUsd != null && (
+                        <div className="text-emerald-600 font-semibold">{formatUsd(feesUsd)}</div>
+                      )}
+                    </div>
+                  ) : '—'}
+                </td>
+                <td className="py-2.5 text-gray-600 font-mono pr-4">
+                  {hasLp ? (
+                    <div className="space-y-0.5">
+                      <div className="text-gray-400">{formatUsd(positionUsd(r.positionToken0Start!, r.positionToken1Start!, dec0, dec1, label0, ethPrice))}</div>
+                      <div className="text-gray-500">↓</div>
+                      <div>{formatUsd(positionUsd(r.positionToken0End!, r.positionToken1End!, dec0, dec1, label0, ethPrice))}</div>
+                    </div>
+                  ) : '—'}
+                </td>
+                <td className="py-2.5 text-gray-500 font-mono pr-4">
+                  {r.gasCostWei != null ? (
+                    <div className="space-y-0.5">
+                      <div>{weiToEth(r.gasCostWei)} ETH</div>
+                      {ethPrice > 0 && (
+                        <div className="text-red-400">{formatUsd(Number(BigInt(r.gasCostWei)) / 1e18 * ethPrice)}</div>
+                      )}
+                    </div>
+                  ) : '—'}
+                </td>
+                <td className="py-2.5">
+                  {r.txHashes
+                    ? JSON.parse(r.txHashes).slice(0, 1).map((h: string) => (
+                      <a key={h} href={`https://arbiscan.io/tx/${h}`} target="_blank" rel="noopener noreferrer"
+                        className="text-blue-600 hover:text-blue-700 font-mono underline underline-offset-2">
+                        {shortHash(h)}
+                      </a>
+                    ))
+                    : <span className="text-gray-400">—</span>}
+                </td>
+              </tr>
+            )
+          })}
         </tbody>
       </table>
     </div>
@@ -817,7 +877,7 @@ export default function StrategyPage() {
                             )}
                             {st && (
                               <>
-                                <InfoRow label={`Fees ${tokenLabel(s.token0)}`} value={formatRaw(st.feesCollectedToken0, tokenDecimals(s.token0))} />
+                                <InfoRow label={`Fees ${tokenLabel(s.token0)}`} value={formatRawWithUsd(st.feesCollectedToken0, tokenDecimals(s.token0), tokenLabel(s.token0), ethPrice)} />
                                 <InfoRow label={`Fees ${tokenLabel(s.token1)}`} value={formatRaw(st.feesCollectedToken1, tokenDecimals(s.token1))} />
                                 <InfoRow label="Gas spent" value={`${weiToEth(st.gasCostWei)} ETH`} />
                               </>

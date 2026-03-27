@@ -97,6 +97,7 @@ class UniswapStrategy(
                         it[positionToken1Start] = result.positionToken1Start
                         it[positionToken0End] = result.positionToken0End
                         it[positionToken1End] = result.positionToken1End
+                        it[ethPriceUsd] = poolState.price
                         it[completedAt] = Clock.System.now()
                     }
                 }

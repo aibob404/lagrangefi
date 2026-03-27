@@ -68,6 +68,7 @@ const MOCK_REBALANCES = [
     // ~0.25 WETH + 710 USDC before, ~0.248 WETH + 705 USDC after (some lost to gas/slippage)
     positionToken0Start: '250000000000000000', positionToken1Start: '710000000',
     positionToken0End:   '248000000000000000', positionToken1End:   '705000000',
+    ethPriceUsd: '3425.50',
     errorMessage: null,
     triggeredAt: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
     completedAt: new Date(Date.now() - 2 * 3600 * 1000 + 30000).toISOString(),
@@ -80,6 +81,7 @@ const MOCK_REBALANCES = [
     gasCostWei: '2900000000000000',
     positionToken0Start: '252000000000000000', positionToken1Start: '715000000',
     positionToken0End:   '250000000000000000', positionToken1End:   '710000000',
+    ethPriceUsd: '3380.00',
     errorMessage: null,
     triggeredAt: new Date(Date.now() - 26 * 3600 * 1000).toISOString(),
     completedAt: new Date(Date.now() - 26 * 3600 * 1000 + 45000).toISOString(),
@@ -91,6 +93,7 @@ const MOCK_REBALANCES = [
     gasCostWei: null,
     positionToken0Start: null, positionToken1Start: null,
     positionToken0End: null, positionToken1End: null,
+    ethPriceUsd: null,
     errorMessage: 'slippage exceeded',
     triggeredAt: new Date(Date.now() - 50 * 3600 * 1000).toISOString(),
     completedAt: new Date(Date.now() - 50 * 3600 * 1000 + 5000).toISOString(),

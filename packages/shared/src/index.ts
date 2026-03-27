@@ -72,6 +72,8 @@ export interface MintResult {
 export interface CloseRequest {
   idempotencyKey: string
   tokenId: string
+  /** Per-request wallet: private key (0x...) or BIP39 mnemonic phrase */
+  walletPrivateKey?: string
 }
 
 export interface CloseResult {

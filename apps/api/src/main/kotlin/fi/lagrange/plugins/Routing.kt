@@ -243,17 +243,24 @@ fun Application.configureRouting(
                     val userId = call.getUserId()
                     val strategyId = call.parameters["id"]?.toIntOrNull()
                         ?: return@delete call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid strategy id"))
+                    val strategy = strategyService.findById(strategyId, userId)
+                        ?: return@delete call.respond(HttpStatusCode.NotFound, mapOf("error" to "Strategy not found"))
                     val ok = strategyService.stop(strategyId, userId)
                     if (!ok) return@delete call.respond(HttpStatusCode.NotFound, mapOf("error" to "Strategy not found"))
                     scheduler.stop(strategyId)
+                    // Close LP position on-chain and unwrap WETH → ETH
+                    try {
+                        val walletPhrase = walletService.getDecryptedPhrase(userId)
+                        if (walletPhrase != null) {
+                            val idempotencyKey = "stop-$strategyId-${System.currentTimeMillis()}"
+                            chainClient.close(idempotencyKey, strategy.currentTokenId, walletPhrase)
+                        }
+                    } catch (_: Exception) { /* non-fatal: DB is already updated */ }
                     // Snapshot fees/gas at historical ETH price when strategy is stopped
                     try {
-                        val strategy = strategyService.findById(strategyId, userId)
-                        if (strategy != null) {
-                            val poolState = chainClient.getPoolByPair(WETH, USDC, strategy.fee)
-                            val closeEthPrice = poolState.price.toDoubleOrNull() ?: 0.0
-                            strategyService.recordClose(strategyId, closeEthPrice)
-                        }
+                        val poolState = chainClient.getPoolByPair(WETH, USDC, strategy.fee)
+                        val closeEthPrice = poolState.price.toDoubleOrNull() ?: 0.0
+                        strategyService.recordClose(strategyId, closeEthPrice)
                     } catch (_: Exception) { /* non-fatal */ }
                     call.respond(mapOf("status" to "stopped"))
                 }

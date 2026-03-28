@@ -78,14 +78,14 @@ export function computeTotalReturn(
   let positionValueUsd: number
 
   if (strategy.status === 'stopped') {
-    if (stats.closeValueUsd != null) {
-      positionValueUsd = stats.closeValueUsd
-    } else if (stats.closeToken0Amount && stats.closeToken1Amount && stats.closeEthPriceUsd) {
+    if (stats.closeToken0Amount && stats.closeToken1Amount && stats.closeEthPriceUsd) {
       const c0 = rawToFloat(stats.closeToken0Amount, dec0)
       const c1 = rawToFloat(stats.closeToken1Amount, dec1)
       positionValueUsd = label0.includes('WETH')
         ? c0 * stats.closeEthPriceUsd + c1
         : c1 * stats.closeEthPriceUsd + c0
+    } else if (stats.closeValueUsd != null) {
+      positionValueUsd = stats.closeValueUsd
     } else {
       return null
     }

@@ -524,11 +524,15 @@ function ClosedEvent({ strategy, stats, dec0, dec1, label0, label1, expanded, on
 }) {
   const depositUsd = depositValueAtOpen(strategy, dec0, dec1, label0) ?? strategy.initialValueUsd
 
-  const withdrawUsd = stats.closeValueUsd ?? (() => {
-    if (!stats.closeToken0Amount || !stats.closeToken1Amount || !stats.closeEthPriceUsd) return null
-    const t0 = rawToFloat(stats.closeToken0Amount, dec0)
-    const t1 = rawToFloat(stats.closeToken1Amount, dec1)
-    return label0.includes('WETH') ? t0 * stats.closeEthPriceUsd + t1 : t1 * stats.closeEthPriceUsd + t0
+  // Prefer computing from raw amounts + decimals (correct dec0/dec1 context).
+  // Only fall back to pre-computed closeValueUsd if raw amounts are unavailable.
+  const withdrawUsd = (() => {
+    if (stats.closeToken0Amount && stats.closeToken1Amount && stats.closeEthPriceUsd) {
+      const t0 = rawToFloat(stats.closeToken0Amount, dec0)
+      const t1 = rawToFloat(stats.closeToken1Amount, dec1)
+      return label0.includes('WETH') ? t0 * stats.closeEthPriceUsd + t1 : t1 * stats.closeEthPriceUsd + t0
+    }
+    return stats.closeValueUsd ?? null
   })()
 
   const positionDelta = (depositUsd != null && withdrawUsd != null) ? withdrawUsd - depositUsd : null

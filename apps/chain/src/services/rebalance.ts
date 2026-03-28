@@ -353,6 +353,10 @@ export async function rebalance(req: RebalanceRequest): Promise<RebalanceResult>
   txSteps.push('Mint Position')
   receipts.push(mintReceipt)
 
+  if (mintReceipt.status === 'reverted') {
+    throw new Error(`mint reverted (tx: ${mintTx})`)
+  }
+
   // Parse new tokenId from Transfer event (ERC721 topic[3] = tokenId)
   const transferLog = mintReceipt.logs.find(
     (log) =>
@@ -373,9 +377,10 @@ export async function rebalance(req: RebalanceRequest): Promise<RebalanceResult>
   let positionToken1End: string | undefined
   if (mintLog?.data && mintLog.data !== '0x') {
     const data = mintLog.data.slice(2)
-    // IncreaseLiquidity(tokenId, liquidity, amount0, amount1) — liquidity in topics[2], amounts in data
-    positionToken0End = BigInt('0x' + data.slice(0, 64)).toString()
-    positionToken1End = BigInt('0x' + data.slice(64, 128)).toString()
+    // IncreaseLiquidity data layout: [liquidity(32 bytes)][amount0(32 bytes)][amount1(32 bytes)]
+    // tokenId is indexed (in topics[1]), so data starts with liquidity
+    positionToken0End = BigInt('0x' + data.slice(64, 128)).toString()   // amount0 (skip liquidity)
+    positionToken1End = BigInt('0x' + data.slice(128, 192)).toString()  // amount1
   }
 
   const gasUsedWei = totalGasWei(receipts).toString()

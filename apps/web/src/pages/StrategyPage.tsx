@@ -743,7 +743,7 @@ function OnboardingState({ hasWallet }: { hasWallet: boolean }) {
 }
 
 // ── Main component ───────────────────────────────────────────────────────────
-export default function StrategyPage() {
+export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard' | 'closed' }) {
   const { user } = useAuth()
 
   const [strategies,    setStrategies]  = useState<Strategy[]>([])
@@ -774,7 +774,8 @@ export default function StrategyPage() {
   const [createInterval, setCreateInterval] = useState('60')
   const [createError,   setCreateError]  = useState<string | null>(null)
   const [successData,   setSuccessData]  = useState<{ tokenId: string; txHashes: string[] } | null>(null)
-  const balancesLoadedRef = useRef(false)
+  const balancesLoadedRef   = useRef(false)
+  const autoLoadedActiveRef = useRef<number | null>(null)
 
   const load = useCallback(async () => {
     setRefreshing(true)
@@ -796,6 +797,15 @@ export default function StrategyPage() {
     return () => clearInterval(iv)
   }, [load])
 
+  // Auto-load data for the active strategy whenever it first appears (or changes)
+  useEffect(() => {
+    const active = strategies.find(s => s.status === 'active')
+    if (!active) return
+    if (autoLoadedActiveRef.current === active.id) return
+    autoLoadedActiveRef.current = active.id
+    loadStrategyData(active.id, true)
+  }, [strategies]) // eslint-disable-line react-hooks/exhaustive-deps
+
   async function loadBalances() {
     if (balancesLoadedRef.current) return
     balancesLoadedRef.current = true
@@ -814,12 +824,8 @@ export default function StrategyPage() {
     setCreateError(null); setSuccessData(null)
   }
 
-  async function expandStrategy(id: number) {
-    if (expandedId === id) { setExpandedId(null); return }
-    setExpandedId(id)
+  async function loadStrategyData(id: number, isActive: boolean) {
     if (!tabMap[id]) setTabMap(prev => ({ ...prev, [id]: 'overview' }))
-    const strategy = strategies.find(s => s.id === id)
-    const isActive = strategy?.status === 'active'
     const [s, r, pos, pool] = await Promise.all([
       fetchStrategyStats(id),
       fetchStrategyRebalances(id),
@@ -830,6 +836,13 @@ export default function StrategyPage() {
     setRebalances(prev => ({ ...prev, [id]: r }))
     if (pos)  setPositions(prev  => ({ ...prev, [id]: pos }))
     if (pool) setPoolStates(prev => ({ ...prev, [id]: pool }))
+  }
+
+  async function expandStrategy(id: number) {
+    if (expandedId === id) { setExpandedId(null); return }
+    setExpandedId(id)
+    const strategy = strategies.find(s => s.id === id)
+    await loadStrategyData(id, strategy?.status === 'active')
   }
 
   function setTab(id: number, tab: 'overview' | 'history') {
@@ -884,13 +897,543 @@ export default function StrategyPage() {
     prevHasActiveRef.current = hasActive
   }, [hasActive, formState])
 
+  const activeStrategies = strategies.filter(s => s.status === 'active')
+  const closedStrategies = strategies.filter(s => s.status === 'stopped')
+
+  function renderStrategyCard(s: Strategy) {
+    const pos      = positions[s.id]
+    const pool     = poolStates[s.id]
+    const st       = stats[s.id]
+    const dec0     = s.token0Decimals ?? 18
+    const dec1     = s.token1Decimals ?? 6
+    const label0   = tokenLabel(s.token0)
+    const label1   = tokenLabel(s.token1)
+    const ethPrice = pool ? parseFloat(pool.price) : (st?.closeEthPriceUsd ?? 0)
+    const inRange  = pool && pos ? pool.tick >= pos.tickLower && pool.tick < pos.tickUpper : null
+
+    const latestSuccess = rebalances[s.id]?.find(r => r.status === 'success' && r.positionToken0End)
+    const liveToken0 = pos?.amount0 ?? latestSuccess?.positionToken0End ?? null
+    const liveToken1 = pos?.amount1 ?? latestSuccess?.positionToken1End ?? null
+
+    const totalReturn = st ? computeTotalReturn(
+      s, st, dec0, dec1, label0, ethPrice,
+      liveToken0 ?? undefined, liveToken1 ?? undefined,
+    ) : null
+    const ilResult = (s.status === 'active' && liveToken0 && liveToken1 && ethPrice > 0)
+      ? computeIL(s, dec0, dec1, label0, ethPrice, liveToken0, liveToken1) : null
+    const days = daysRunning(s.createdAt)
+    const apy = (totalReturn?.totalReturnUsd != null && s.initialValueUsd && days > 0)
+      ? computeAPY(totalReturn.totalReturnUsd, s.initialValueUsd, days) : null
+    const breakEven = st ? computeBreakEven(st, days) : null
+    const tab = tabMap[s.id] ?? 'overview'
+
+    // Active strategy is always expanded; closed strategies toggle on click
+    const isAlwaysExpanded = s.status === 'active'
+    const isExpanded = isAlwaysExpanded || expandedId === s.id
+
+    return (
+      <div key={s.id} className={`relative backdrop-blur-xl rounded-2xl border shadow-lg transition-shadow hover:shadow-xl ${
+        s.status === 'active'
+          ? 'bg-white/65 border-white/70 shadow-emerald-100/50'
+          : 'bg-white/50 border-white/60'
+      }`}>
+        {s.status === 'active' && (
+          <div className="absolute top-0 left-0 right-0 h-0.5 rounded-t-2xl bg-gradient-to-r from-emerald-400 via-teal-300 to-emerald-400" />
+        )}
+
+        {/* Card header */}
+        <div
+          className={`flex items-center justify-between px-3 sm:px-5 py-3 sm:py-4 ${!isAlwaysExpanded ? 'cursor-pointer hover:bg-white/20 transition-colors' : ''}`}
+          onClick={!isAlwaysExpanded ? () => expandStrategy(s.id) : undefined}
+        >
+          <div className="flex items-center gap-3 min-w-0">
+            <StatusBadge status={s.status} />
+            <span className="font-semibold text-gray-900 truncate">{s.name}</span>
+            <span className="text-xs text-gray-400 font-mono shrink-0 hidden sm:inline">
+              {label0}/{label1} · {feeLabel(s.fee)}
+            </span>
+            {s.status !== 'stopped' && (
+              <span className="text-xs text-gray-400 shrink-0 hidden md:inline">
+                {days}d running
+              </span>
+            )}
+            {s.status === 'active' && inRange !== null && (
+              <span className={`hidden lg:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ${
+                inRange
+                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                  : 'bg-red-50 text-red-700 border border-red-200'
+              }`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${inRange ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`} />
+                {inRange ? 'In Range' : 'Out of Range'}
+              </span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-1.5 shrink-0 ml-2" onClick={e => e.stopPropagation()}>
+            {s.status !== 'stopped' && confirmStopId !== s.id && (
+              <button onClick={() => setConfirmStopId(s.id)}
+                className="inline-flex items-center gap-1.5 text-xs font-semibold text-red-500/80
+                           bg-red-500/8 backdrop-blur-sm border border-red-300/40
+                           hover:text-red-600 hover:bg-red-500/15 hover:border-red-400/60
+                           px-3 py-1.5 rounded-lg transition-all hover:shadow-sm hover:shadow-red-100">
+                <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
+                  <rect x="4" y="4" width="16" height="16" rx="2"/>
+                </svg>
+                Stop
+              </button>
+            )}
+            {confirmStopId === s.id && (
+              <div className="flex items-center gap-2 bg-white/80 backdrop-blur-md border border-red-100 rounded-xl px-3 py-1.5 shadow-lg shadow-red-500/10">
+                <span className="text-xs text-gray-500 font-medium whitespace-nowrap">
+                  {stoppingId === s.id ? 'Stopping…' : 'Stop permanently?'}
+                </span>
+                <button onClick={() => handleStop(s.id)} disabled={stoppingId === s.id}
+                  className="inline-flex items-center gap-1 text-xs font-bold text-white
+                             bg-gradient-to-r from-red-500 to-rose-600
+                             hover:from-red-600 hover:to-rose-700
+                             disabled:opacity-60 disabled:cursor-not-allowed
+                             px-3 py-1 rounded-lg shadow-sm shadow-red-500/30 transition-all">
+                  {stoppingId === s.id ? (
+                    <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+                    </svg>
+                  ) : (
+                    <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+                  )}
+                  {stoppingId === s.id ? '' : 'Confirm'}
+                </button>
+                {stoppingId !== s.id && (
+                  <button onClick={() => setConfirmStopId(null)}
+                    className="text-xs font-medium text-gray-400 hover:text-gray-600 transition-colors">
+                    Cancel
+                  </button>
+                )}
+              </div>
+            )}
+            {!isAlwaysExpanded && (
+              <svg
+                className={`w-4 h-4 text-gray-300 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
+                fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            )}
+          </div>
+        </div>
+
+        {/* Expanded panel */}
+        {isExpanded && (
+          <div className="border-t border-white/50 px-3 sm:px-5 py-4 sm:py-5 bg-white/10">
+            {/* Tabs */}
+            <div className="flex gap-1 bg-gray-100/80 border border-gray-200/60 rounded-xl p-1 w-fit mb-5">
+              {(['overview', 'history'] as const).map(t => (
+                <button key={t} onClick={() => setTab(s.id, t)}
+                  className={`px-4 py-1.5 rounded-lg text-xs font-semibold capitalize transition-all ${
+                    tab === t
+                      ? 'bg-white text-gray-900 shadow-sm border border-gray-200/80'
+                      : 'text-gray-400 hover:text-gray-600'
+                  }`}>
+                  {t}
+                </button>
+              ))}
+            </div>
+
+            {/* ── Overview tab ── */}
+            {tab === 'overview' && (
+              <div className="space-y-4">
+
+                {/* Summary strip */}
+                {st && (
+                  <div className="bg-white/50 backdrop-blur-md border border-white/70 rounded-2xl overflow-hidden shadow-sm">
+                    <div className="grid grid-cols-2 sm:grid-cols-4">
+
+                      {/* Total Return — hero */}
+                      <div className="relative px-5 py-4 border-b sm:border-b-0 sm:border-r border-white/50">
+                        <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-emerald-400/70 to-teal-300/50" />
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2.5">Total Return</p>
+                        <p className={`text-xl font-bold tracking-tight ${
+                          totalReturn == null ? 'text-gray-400' :
+                          totalReturn.totalReturnUsd >= 0 ? 'text-emerald-600' : 'text-red-500'
+                        }`}>
+                          {totalReturn == null ? '—' :
+                            (totalReturn.totalReturnUsd >= 0 ? '+' : '') + formatUsd(totalReturn.totalReturnUsd)}
+                        </p>
+                        {totalReturn?.totalReturnPct != null && (
+                          <p className={`text-[10px] mt-1.5 font-semibold ${totalReturn.totalReturnUsd >= 0 ? 'text-emerald-500' : 'text-red-400'}`}>
+                            {totalReturn.totalReturnUsd >= 0 ? '+' : ''}{totalReturn.totalReturnPct.toFixed(2)}% on deposit
+                          </p>
+                        )}
+                      </div>
+
+                      {/* IL (active) / Position Δ (stopped) */}
+                      <div className="relative px-5 py-4 border-b sm:border-b-0 sm:border-r border-white/50">
+                        <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-orange-400/70 to-amber-300/50" />
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2.5">
+                          {s.status === 'active' ? 'Imperm. Loss' : 'Position Δ'}
+                        </p>
+                        {s.status === 'active' ? (
+                          ilResult ? (
+                            <>
+                              <p className={`text-xl font-bold tracking-tight ${ilResult.ilUsd >= 0 ? 'text-emerald-600' : 'text-orange-500'}`}>
+                                {ilResult.ilUsd >= 0 ? '+' : ''}{formatUsd(ilResult.ilUsd)}
+                              </p>
+                              <p className={`text-[10px] mt-1.5 font-semibold ${ilResult.ilUsd >= 0 ? 'text-emerald-500' : 'text-orange-400'}`}>
+                                {ilResult.ilPct.toFixed(2)}% vs holding
+                              </p>
+                            </>
+                          ) : (
+                            <p className="text-xl font-bold text-gray-300">—</p>
+                          )
+                        ) : totalReturn ? (
+                          <>
+                            <p className={`text-xl font-bold tracking-tight ${
+                              (totalReturn.positionValueUsd - (s.initialValueUsd ?? 0)) >= 0 ? 'text-emerald-600' : 'text-red-500'
+                            }`}>
+                              {((totalReturn.positionValueUsd - (s.initialValueUsd ?? 0)) >= 0 ? '+' : '') +
+                                formatUsd(totalReturn.positionValueUsd - (s.initialValueUsd ?? 0))}
+                            </p>
+                            <p className="text-[10px] mt-1.5 text-gray-400">deposit → withdraw</p>
+                          </>
+                        ) : <p className="text-xl font-bold text-gray-300">—</p>}
+                      </div>
+
+                      {/* APY */}
+                      <div className="relative px-5 py-4 border-r border-white/50">
+                        <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-sky-400/70 to-blue-300/50" />
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2.5">APY</p>
+                        <p className={`text-xl font-bold tracking-tight ${
+                          apy == null ? 'text-gray-400' : apy >= 0 ? 'text-sky-600' : 'text-red-500'
+                        }`}>
+                          {apy == null ? '—' : (apy >= 0 ? '+' : '') + apy.toFixed(1) + '%'}
+                        </p>
+                        <p className="text-[10px] text-gray-400 mt-1.5">annualized · {days}d running</p>
+                      </div>
+
+                      {/* Time in range */}
+                      <div className="relative px-5 py-4">
+                        <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-violet-400/70 to-purple-300/50" />
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2.5">In Range</p>
+                        <p className={`text-xl font-bold tracking-tight ${
+                          st.timeInRangePct >= 70 ? 'text-emerald-600' : st.timeInRangePct >= 40 ? 'text-amber-500' : 'text-red-500'
+                        }`}>
+                          {st.timeInRangePct.toFixed(1)}%
+                        </p>
+                        <div className="mt-2 h-1 bg-white/70 rounded-full overflow-hidden">
+                          <div className={`h-full rounded-full ${
+                            st.timeInRangePct >= 70 ? 'bg-gradient-to-r from-emerald-400 to-teal-400' :
+                            st.timeInRangePct >= 40 ? 'bg-amber-400' : 'bg-red-400'
+                          }`} style={{ width: `${st.timeInRangePct}%` }} />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Main grid */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+                  {/* Position card */}
+                  <div className="bg-white/50 backdrop-blur-md border border-white/70 rounded-2xl shadow-sm">
+                    <div className="bg-gradient-to-r from-blue-500/10 via-sky-400/6 to-transparent border-b border-blue-100/50 px-5 pt-4 pb-3 rounded-t-2xl">
+                      <div className="flex items-center justify-between mb-1">
+                        <div className="flex items-center gap-2">
+                          <div className="w-0.5 h-4 rounded-full bg-gradient-to-b from-blue-400 to-sky-400" />
+                          <h3 className="text-[10px] font-bold uppercase tracking-widest text-blue-500/90">Position</h3>
+                        </div>
+                        {pos && (
+                          <div className="flex items-center gap-1.5 bg-white/60 border border-white/80 rounded-lg px-2.5 py-1">
+                            <span className="text-[10px] text-gray-400">NFT</span>
+                            <span className="text-xs font-mono font-bold text-gray-700">#{pos.tokenId}</span>
+                            <span className={`text-[10px] font-bold ${BigInt(pos.liquidity) > 0n ? 'text-emerald-500' : 'text-red-400'}`}>
+                              {BigInt(pos.liquidity) > 0n ? '●' : '○'}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                      {s.status === 'active' && pool && pos && (
+                        <>
+                          <p className="text-3xl font-bold text-gray-900 tracking-tight leading-none mt-2">
+                            ${Number(pool.price).toLocaleString('en-US', { maximumFractionDigits: 2 })}
+                          </p>
+                          <p className="text-xs text-gray-400 mt-1">{label0}/{label1} · {feeLabel(pos.fee)}</p>
+                        </>
+                      )}
+                    </div>
+                    <div className="px-5 py-4"
+                      style={{ backgroundImage: 'radial-gradient(circle, rgba(99,102,241,0.07) 1px, transparent 1px)', backgroundSize: '18px 18px' }}>
+                      {s.status !== 'active' ? (
+                        <div className="space-y-2">
+                          <div className="flex items-center gap-3 bg-white/70 border border-white/80 rounded-xl px-3 py-2.5">
+                            <span className="text-xs font-medium text-gray-400">NFT</span>
+                            <span className="text-xs font-mono font-bold text-gray-700">#{s.currentTokenId}</span>
+                            <span className="ml-auto text-xs text-gray-400">{label0}/{label1} · {feeLabel(s.fee)}</span>
+                          </div>
+                          <p className="text-xs text-gray-400 px-1">Live data available for active strategies only.</p>
+                        </div>
+                      ) : pos && pool ? (
+                        <>
+                          <PriceRangeBar
+                            tick={pool.tick} tickLower={pos.tickLower} tickUpper={pos.tickUpper}
+                            decimals0={pool.decimals0} decimals1={pool.decimals1}
+                          />
+                          {liveToken0 && liveToken1 && ethPrice > 0 && (
+                            <TokenRatioBar
+                              token0Raw={liveToken0} token1Raw={liveToken1}
+                              dec0={dec0} dec1={dec1} label0={label0} label1={label1} ethPrice={ethPrice}
+                            />
+                          )}
+                        </>
+                      ) : (
+                        <div className="flex items-center gap-2 text-gray-400 text-sm py-8 justify-center">
+                          <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                          </svg>
+                          Loading…
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Right column */}
+                  <div className="flex flex-col gap-4">
+
+                    {/* Performance card */}
+                    <div className="bg-white/50 backdrop-blur-md border border-white/70 rounded-2xl shadow-sm">
+                      <div className="bg-gradient-to-r from-emerald-500/10 via-teal-400/6 to-transparent border-b border-emerald-100/50 px-5 pt-4 pb-3 rounded-t-2xl">
+                        <div className="flex items-center gap-2">
+                          <div className="w-0.5 h-4 rounded-full bg-gradient-to-b from-emerald-400 to-teal-400" />
+                          <h3 className="text-[10px] font-bold uppercase tracking-widest text-emerald-600/90">Performance</h3>
+                        </div>
+                      </div>
+                      <div className="px-5 py-4">
+                        {st ? (
+                          <div className="space-y-1.5">
+
+                            {/* Deposit row (at historical ETH price) */}
+                            {s.initialValueUsd != null && (
+                              <div className="flex justify-between items-start px-2.5 py-1.5 rounded-lg bg-gray-50/60 border border-gray-100/60">
+                                <div>
+                                  <span className="text-xs font-medium text-gray-500">Deposited</span>
+                                  {s.openEthPriceUsd && (
+                                    <p className="text-[10px] text-gray-400 mt-0.5">ETH = ${s.openEthPriceUsd.toFixed(0)} at open</p>
+                                  )}
+                                </div>
+                                <span className="text-xs font-bold font-mono text-gray-700">{formatUsd(s.initialValueUsd)}</span>
+                              </div>
+                            )}
+
+                            {/* Current/close position value */}
+                            {totalReturn && (
+                              <div className={`flex justify-between items-start px-2.5 py-1.5 rounded-lg border ${
+                                s.status === 'active'
+                                  ? 'bg-blue-50/40 border-blue-100/50'
+                                  : 'bg-gray-50/40 border-gray-100/50'
+                              }`}>
+                                <div>
+                                  <span className="text-xs font-medium text-gray-500">
+                                    {s.status === 'active' ? 'Current position' : 'Withdrawn'}
+                                  </span>
+                                  {s.status === 'active' && ethPrice > 0 && (
+                                    <p className="text-[10px] text-gray-400 mt-0.5">ETH = ${ethPrice.toFixed(0)} now</p>
+                                  )}
+                                </div>
+                                <span className="text-xs font-bold font-mono text-gray-700">{formatUsd(totalReturn.positionValueUsd)}</span>
+                              </div>
+                            )}
+
+                            {/* Fees earned */}
+                            <div className="flex justify-between items-start px-2.5 py-1.5 rounded-lg bg-emerald-50/50 border border-emerald-100/60">
+                              <span className="text-xs font-medium text-emerald-700 flex items-center gap-1.5 mt-0.5">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
+                                Fees earned
+                              </span>
+                              <div className="text-right">
+                                <p className="text-xs font-bold text-emerald-600 font-mono">
+                                  {totalReturn ? '+' + formatUsd(totalReturn.feesCollectedUsd) : '—'}
+                                </p>
+                                {st.feesCollectedToken0 !== '0' && (
+                                  <p className="text-[11px] text-gray-400 font-mono mt-0.5">
+                                    <RawAmount amount={st.feesCollectedToken0} decimals={dec0} label={label0} />
+                                    {' + '}
+                                    <RawAmount amount={st.feesCollectedToken1} decimals={dec1} label={label1} />
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Unclaimed fees (active only) */}
+                            {s.status === 'active' && pos && (() => {
+                              const uf = computeUnclaimedFees(pos, ethPrice, dec0, dec1)
+                              return uf ? (
+                                <div className="flex justify-between items-start px-2.5 py-1.5 rounded-lg bg-sky-50/50 border border-sky-100/60">
+                                  <span className="text-xs font-medium text-sky-700 flex items-center gap-1.5 mt-0.5">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-sky-400 shrink-0" />
+                                    Unclaimed fees
+                                  </span>
+                                  <div className="text-right">
+                                    <p className="text-xs font-bold text-sky-600 font-mono">+{formatUsd(uf.usd)}</p>
+                                    <p className="text-[11px] text-gray-400 font-mono mt-0.5">
+                                      {uf.t0.toFixed(6)} {label0} · {uf.t1.toFixed(2)} {label1}
+                                    </p>
+                                  </div>
+                                </div>
+                              ) : null
+                            })()}
+
+                            {/* Gas spent */}
+                            <div className="flex justify-between items-start px-2.5 py-1.5 rounded-lg bg-red-50/50 border border-red-100/60">
+                              <span className="text-xs font-medium text-red-600 flex items-center gap-1.5 mt-0.5">
+                                <span className="w-1.5 h-1.5 rounded-full bg-red-400 shrink-0" />
+                                Gas spent
+                              </span>
+                              <div className="text-right">
+                                <p className="text-xs font-bold text-red-500 font-mono">
+                                  <Tooltip tip={`${st.gasCostWei} wei`}>
+                                    {totalReturn ? '−' + formatUsd(totalReturn.gasSpentUsd) : weiToEth(st.gasCostWei) + ' ETH'}
+                                  </Tooltip>
+                                </p>
+                                {totalReturn && (
+                                  <p className="text-[11px] text-gray-400 font-mono mt-0.5">{weiToEth(st.gasCostWei)} ETH</p>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* IL row (active only) */}
+                            {s.status === 'active' && ilResult && (
+                              <div className={`flex justify-between items-start px-2.5 py-1.5 rounded-lg border ${
+                                ilResult.ilUsd >= 0
+                                  ? 'bg-emerald-50/40 border-emerald-100/50'
+                                  : 'bg-orange-50/40 border-orange-100/50'
+                              }`}>
+                                <div>
+                                  <span className={`text-xs font-medium flex items-center gap-1.5 mt-0.5 ${ilResult.ilUsd >= 0 ? 'text-emerald-700' : 'text-orange-600'}`}>
+                                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${ilResult.ilUsd >= 0 ? 'bg-emerald-400' : 'bg-orange-400'}`} />
+                                    Imperm. loss
+                                  </span>
+                                  <p className="text-[10px] text-gray-400 mt-0.5 ml-3">vs holding since open</p>
+                                </div>
+                                <div className="text-right">
+                                  <p className={`text-xs font-bold font-mono ${ilResult.ilUsd >= 0 ? 'text-emerald-600' : 'text-orange-500'}`}>
+                                    {ilResult.ilUsd >= 0 ? '+' : ''}{formatUsd(ilResult.ilUsd)}
+                                  </p>
+                                  <p className={`text-[10px] font-semibold mt-0.5 ${ilResult.ilUsd >= 0 ? 'text-emerald-500' : 'text-orange-400'}`}>
+                                    {ilResult.ilPct.toFixed(2)}%
+                                  </p>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Fees/gas ratio bar */}
+                            {totalReturn && totalReturn.feesCollectedUsd > 0 && (
+                              <div className="h-1 rounded-full overflow-hidden flex mx-2.5 mt-1 bg-gray-100">
+                                <div className="h-full bg-gradient-to-r from-emerald-400 to-emerald-500"
+                                  style={{ width: `${Math.min((totalReturn.feesCollectedUsd / (totalReturn.feesCollectedUsd + totalReturn.gasSpentUsd)) * 100, 100)}%` }} />
+                                <div className="h-full bg-gradient-to-r from-red-400 to-red-500"
+                                  style={{ width: `${Math.min((totalReturn.gasSpentUsd / (totalReturn.feesCollectedUsd + totalReturn.gasSpentUsd)) * 100, 100)}%` }} />
+                              </div>
+                            )}
+
+                            {/* Break-even */}
+                            {breakEven && (
+                              <div className="px-2.5 pt-2 mt-1">
+                                <div className="flex justify-between text-[10px] text-gray-400 mb-1">
+                                  <span className="font-semibold">
+                                    {breakEven.isBreakEven ? '✓ Gas recovered' : 'Gas recovery'}
+                                  </span>
+                                  <span>
+                                    {breakEven.isBreakEven
+                                      ? `${formatUsd(breakEven.feesCollectedUsd)} earned vs ${formatUsd(breakEven.breakEvenUsd)} gas`
+                                      : `${formatUsd(breakEven.remainingUsd)} remaining${breakEven.estimatedDays != null ? ` · ~${breakEven.estimatedDays}d` : ''}`
+                                    }
+                                  </span>
+                                </div>
+                                <div className="h-1 rounded-full overflow-hidden bg-gray-100">
+                                  <div className={`h-full rounded-full transition-all ${breakEven.isBreakEven ? 'bg-emerald-400' : 'bg-sky-400'}`}
+                                    style={{ width: `${Math.min((breakEven.feesCollectedUsd / breakEven.breakEvenUsd) * 100, 100)}%` }} />
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Stopped snapshot */}
+                            {s.status === 'stopped' && st.closeEthPriceUsd != null && (
+                              <div className="pt-3 border-t border-gray-100/80 space-y-1">
+                                <p className="text-[11px] text-gray-400 font-medium px-2.5">At close · ETH = {formatUsd(st.closeEthPriceUsd)}</p>
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <p className="text-xs text-gray-400 py-2 px-2.5">Loading…</p>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Config card */}
+                    <div className="bg-white/50 backdrop-blur-md border border-white/70 rounded-2xl shadow-sm">
+                      <div className="bg-gradient-to-r from-violet-500/10 via-purple-400/6 to-transparent border-b border-violet-100/50 px-5 pt-4 pb-3 rounded-t-2xl">
+                        <div className="flex items-center gap-2">
+                          <div className="w-0.5 h-4 rounded-full bg-gradient-to-b from-violet-400 to-purple-400" />
+                          <h3 className="text-[10px] font-bold uppercase tracking-widest text-violet-500/90">Config</h3>
+                        </div>
+                      </div>
+                      <div className="px-5 py-4">
+                        <div className="flex flex-wrap gap-2 mb-3">
+                          {[
+                            `±${(s.rangePercent * 100).toFixed(0)}% range`,
+                            `${(s.slippageTolerance * 100).toFixed(2)}% slip`,
+                            `${s.pollIntervalSeconds}s poll`,
+                            feeLabel(s.fee) + ' fee',
+                          ].map(tag => (
+                            <span key={tag} className="inline-flex items-center px-2.5 py-1 rounded-lg bg-white/70 border border-white/90 text-xs font-semibold text-gray-600 shadow-sm">
+                              {tag}
+                            </span>
+                          ))}
+                        </div>
+                        <div className="space-y-0.5">
+                          <InfoRow label="Started" value={new Date(s.createdAt).toLocaleDateString()} />
+                          {s.status !== 'stopped'
+                            ? <InfoRow label="Running" value={`${days} days`} />
+                            : s.stoppedAt ? <InfoRow label="Stopped" value={new Date(s.stoppedAt).toLocaleDateString()} /> : null
+                          }
+                          {s.initialToken0Amount && (
+                            <InfoRow label={`Deposit ${label0}`} value={<RawAmount amount={s.initialToken0Amount} decimals={dec0} label={label0} />} />
+                          )}
+                          {s.initialToken1Amount && (
+                            <InfoRow label={`Deposit ${label1}`} value={<RawAmount amount={s.initialToken1Amount} decimals={dec1} label={label1} />} />
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                  </div>{/* end right column */}
+                </div>
+              </div>
+            )}
+
+            {/* ── History tab ── */}
+            {tab === 'history' && (
+              <div className="bg-white/50 backdrop-blur-sm border border-white/70 rounded-2xl p-5 shadow-sm">
+                <ActivityTimeline
+                  strategy={s}
+                  stats={st}
+                  events={rebalances[s.id]}
+                  dec0={dec0} dec1={dec1} label0={label0} label1={label1}
+                />
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    )
+  }
+
   return (
     <div>
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-y-3 mb-7">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Strategies</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Uniswap v3 · Arbitrum</p>
+          <h1 className="text-2xl font-bold text-gray-900">{view === 'closed' ? 'Closed Strategies' : 'Dashboard'}</h1>
+          <p className="text-sm text-gray-500 mt-0.5">{view === 'closed' ? 'Historical records' : 'Uniswap v3 · Arbitrum'}</p>
         </div>
         <div className="flex items-center gap-3 mt-1">
           {refreshing ? (
@@ -901,17 +1444,19 @@ export default function StrategyPage() {
           ) : lastUpdated ? (
             <span className="text-xs text-gray-400">Updated {lastUpdated.toLocaleTimeString()}</span>
           ) : null}
-          <button
-            onClick={openCreate}
-            disabled={hasActive}
-            title={hasActive ? 'Stop your active strategy before creating a new one' : undefined}
-            className="inline-flex items-center gap-2 bg-gray-900 hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold px-4 py-2 rounded-xl shadow-sm hover:shadow transition-all"
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-            </svg>
-            New strategy
-          </button>
+          {view === 'dashboard' && (
+            <button
+              onClick={openCreate}
+              disabled={hasActive}
+              title={hasActive ? 'Stop your active strategy before creating a new one' : undefined}
+              className="inline-flex items-center gap-2 bg-gray-900 hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold px-4 py-2 rounded-xl shadow-sm hover:shadow transition-all"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+              </svg>
+              New strategy
+            </button>
+          )}
         </div>
       </div>
 
@@ -927,7 +1472,7 @@ export default function StrategyPage() {
       )}
 
       {/* ── Create form ──────────────────────────────────────────────────── */}
-      {showCreate && (!hasActive || formState === 'success') && (
+      {view === 'dashboard' && showCreate && (!hasActive || formState === 'success') && (
         <div className="bg-white/60 backdrop-blur-xl rounded-2xl border border-white/70 shadow-lg shadow-black/5 p-6 mb-6">
           <div className="flex items-center justify-between mb-5">
             <h2 className="text-base font-semibold text-gray-900">New strategy</h2>
@@ -1151,533 +1696,30 @@ export default function StrategyPage() {
       )}
 
       {/* ── Strategy list ─────────────────────────────────────────────────── */}
-      {strategies.length === 0 ? (
-        <OnboardingState hasWallet={user?.hasWallet ?? false} />
+      {view === 'dashboard' ? (
+        strategies.length === 0 ? (
+          <OnboardingState hasWallet={user?.hasWallet ?? false} />
+        ) : activeStrategies.length > 0 ? (
+          activeStrategies.map(renderStrategyCard)
+        ) : (
+          <div className="bg-white/40 backdrop-blur-xl rounded-2xl border border-dashed border-gray-200 px-6 py-10 text-center">
+            <p className="text-sm font-medium text-gray-400">No active strategy</p>
+            <p className="text-xs text-gray-400 mt-1">Use the "New strategy" button above to get started.</p>
+          </div>
+        )
       ) : (
-        <div className="space-y-3">
-          {strategies.map(s => {
-            const pos      = positions[s.id]
-            const pool     = poolStates[s.id]
-            const st       = stats[s.id]
-            const dec0     = s.token0Decimals ?? 18
-            const dec1     = s.token1Decimals ?? 6
-            const label0   = tokenLabel(s.token0)
-            const label1   = tokenLabel(s.token1)
-            const ethPrice = pool ? parseFloat(pool.price) : (st?.closeEthPriceUsd ?? 0)
-            const inRange  = pool && pos ? pool.tick >= pos.tickLower && pool.tick < pos.tickUpper : null
-
-            // Use live position amounts; fall back to latest successful rebalance end amounts
-            const latestSuccess = rebalances[s.id]?.find(r => r.status === 'success' && r.positionToken0End)
-            const liveToken0 = pos?.amount0 ?? latestSuccess?.positionToken0End ?? null
-            const liveToken1 = pos?.amount1 ?? latestSuccess?.positionToken1End ?? null
-
-            const totalReturn = st ? computeTotalReturn(
-              s, st, dec0, dec1, label0, ethPrice,
-              liveToken0 ?? undefined, liveToken1 ?? undefined,
-            ) : null
-            const ilResult = (s.status === 'active' && liveToken0 && liveToken1 && ethPrice > 0)
-              ? computeIL(s, dec0, dec1, label0, ethPrice, liveToken0, liveToken1) : null
-            const days = daysRunning(s.createdAt)
-            const apy = (totalReturn?.totalReturnUsd != null && s.initialValueUsd && days > 0)
-              ? computeAPY(totalReturn.totalReturnUsd, s.initialValueUsd, days) : null
-            const breakEven = st ? computeBreakEven(st, days) : null
-            const tab = tabMap[s.id] ?? 'overview'
-
-            return (
-              <div key={s.id} className={`relative backdrop-blur-xl rounded-2xl border shadow-lg transition-shadow hover:shadow-xl ${
-                s.status === 'active'
-                  ? 'bg-white/65 border-white/70 shadow-emerald-100/50'
-                  : 'bg-white/50 border-white/60'
-              }`}>
-                {s.status === 'active' && (
-                  <div className="absolute top-0 left-0 right-0 h-0.5 rounded-t-2xl bg-gradient-to-r from-emerald-400 via-teal-300 to-emerald-400" />
-                )}
-
-                {/* Card header */}
-                <div
-                  className="flex items-center justify-between px-3 sm:px-5 py-3 sm:py-4 cursor-pointer hover:bg-white/20 transition-colors"
-                  onClick={() => expandStrategy(s.id)}
-                >
-                  <div className="flex items-center gap-3 min-w-0">
-                    <StatusBadge status={s.status} />
-                    <span className="font-semibold text-gray-900 truncate">{s.name}</span>
-                    <span className="text-xs text-gray-400 font-mono shrink-0 hidden sm:inline">
-                      {label0}/{label1} · {feeLabel(s.fee)}
-                    </span>
-                    {s.status !== 'stopped' && (
-                      <span className="text-xs text-gray-400 shrink-0 hidden md:inline">
-                        {days}d running
-                      </span>
-                    )}
-                    {s.status === 'active' && inRange !== null && (
-                      <span className={`hidden lg:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ${
-                        inRange
-                          ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                          : 'bg-red-50 text-red-700 border border-red-200'
-                      }`}>
-                        <span className={`w-1.5 h-1.5 rounded-full ${inRange ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`} />
-                        {inRange ? 'In Range' : 'Out of Range'}
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="flex items-center gap-1.5 shrink-0 ml-2" onClick={e => e.stopPropagation()}>
-                    {s.status !== 'stopped' && confirmStopId !== s.id && (
-                      <button onClick={() => setConfirmStopId(s.id)}
-                        className="inline-flex items-center gap-1.5 text-xs font-semibold text-red-500/80
-                                   bg-red-500/8 backdrop-blur-sm border border-red-300/40
-                                   hover:text-red-600 hover:bg-red-500/15 hover:border-red-400/60
-                                   px-3 py-1.5 rounded-lg transition-all hover:shadow-sm hover:shadow-red-100">
-                        <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
-                          <rect x="4" y="4" width="16" height="16" rx="2"/>
-                        </svg>
-                        Stop
-                      </button>
-                    )}
-                    {confirmStopId === s.id && (
-                      <div className="flex items-center gap-2 bg-white/80 backdrop-blur-md border border-red-100 rounded-xl px-3 py-1.5 shadow-lg shadow-red-500/10">
-                        <span className="text-xs text-gray-500 font-medium whitespace-nowrap">
-                          {stoppingId === s.id ? 'Stopping…' : 'Stop permanently?'}
-                        </span>
-                        <button onClick={() => handleStop(s.id)} disabled={stoppingId === s.id}
-                          className="inline-flex items-center gap-1 text-xs font-bold text-white
-                                     bg-gradient-to-r from-red-500 to-rose-600
-                                     hover:from-red-600 hover:to-rose-700
-                                     disabled:opacity-60 disabled:cursor-not-allowed
-                                     px-3 py-1 rounded-lg shadow-sm shadow-red-500/30 transition-all">
-                          {stoppingId === s.id ? (
-                            <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
-                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
-                            </svg>
-                          ) : (
-                            <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
-                          )}
-                          {stoppingId === s.id ? '' : 'Confirm'}
-                        </button>
-                        {stoppingId !== s.id && (
-                          <button onClick={() => setConfirmStopId(null)}
-                            className="text-xs font-medium text-gray-400 hover:text-gray-600 transition-colors">
-                            Cancel
-                          </button>
-                        )}
-                      </div>
-                    )}
-                    <svg
-                      className={`w-4 h-4 text-gray-300 transition-transform duration-200 ${expandedId === s.id ? 'rotate-180' : ''}`}
-                      fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <polyline points="6 9 12 15 18 9" />
-                    </svg>
-                  </div>
-                </div>
-
-                {/* Expanded panel */}
-                {expandedId === s.id && (
-                  <div className="border-t border-white/50 px-3 sm:px-5 py-4 sm:py-5 bg-white/10">
-                    {/* Tabs */}
-                    <div className="flex gap-1 bg-gray-100/80 border border-gray-200/60 rounded-xl p-1 w-fit mb-5">
-                      {(['overview', 'history'] as const).map(t => (
-                        <button key={t} onClick={() => setTab(s.id, t)}
-                          className={`px-4 py-1.5 rounded-lg text-xs font-semibold capitalize transition-all ${
-                            tab === t
-                              ? 'bg-white text-gray-900 shadow-sm border border-gray-200/80'
-                              : 'text-gray-400 hover:text-gray-600'
-                          }`}>
-                          {t}
-                        </button>
-                      ))}
-                    </div>
-
-                    {/* ── Overview tab ── */}
-                    {tab === 'overview' && (
-                      <div className="space-y-4">
-
-                        {/* Summary strip */}
-                        {st && (
-                          <div className="bg-white/50 backdrop-blur-md border border-white/70 rounded-2xl overflow-hidden shadow-sm">
-                            <div className="grid grid-cols-2 sm:grid-cols-4">
-
-                              {/* Total Return — hero */}
-                              <div className="relative px-5 py-4 border-b sm:border-b-0 sm:border-r border-white/50">
-                                <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-emerald-400/70 to-teal-300/50" />
-                                <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2.5">Total Return</p>
-                                <p className={`text-xl font-bold tracking-tight ${
-                                  totalReturn == null ? 'text-gray-400' :
-                                  totalReturn.totalReturnUsd >= 0 ? 'text-emerald-600' : 'text-red-500'
-                                }`}>
-                                  {totalReturn == null ? '—' :
-                                    (totalReturn.totalReturnUsd >= 0 ? '+' : '') + formatUsd(totalReturn.totalReturnUsd)}
-                                </p>
-                                {totalReturn?.totalReturnPct != null && (
-                                  <p className={`text-[10px] mt-1.5 font-semibold ${totalReturn.totalReturnUsd >= 0 ? 'text-emerald-500' : 'text-red-400'}`}>
-                                    {totalReturn.totalReturnUsd >= 0 ? '+' : ''}{totalReturn.totalReturnPct.toFixed(2)}% on deposit
-                                  </p>
-                                )}
-                              </div>
-
-                              {/* IL (active) / Position Δ (stopped) */}
-                              <div className="relative px-5 py-4 border-b sm:border-b-0 sm:border-r border-white/50">
-                                <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-orange-400/70 to-amber-300/50" />
-                                <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2.5">
-                                  {s.status === 'active' ? 'Imperm. Loss' : 'Position Δ'}
-                                </p>
-                                {s.status === 'active' ? (
-                                  ilResult ? (
-                                    <>
-                                      <p className={`text-xl font-bold tracking-tight ${ilResult.ilUsd >= 0 ? 'text-emerald-600' : 'text-orange-500'}`}>
-                                        {ilResult.ilUsd >= 0 ? '+' : ''}{formatUsd(ilResult.ilUsd)}
-                                      </p>
-                                      <p className={`text-[10px] mt-1.5 font-semibold ${ilResult.ilUsd >= 0 ? 'text-emerald-500' : 'text-orange-400'}`}>
-                                        {ilResult.ilPct.toFixed(2)}% vs holding
-                                      </p>
-                                    </>
-                                  ) : (
-                                    <p className="text-xl font-bold text-gray-300">—</p>
-                                  )
-                                ) : totalReturn ? (
-                                  <>
-                                    <p className={`text-xl font-bold tracking-tight ${
-                                      (totalReturn.positionValueUsd - (s.initialValueUsd ?? 0)) >= 0 ? 'text-emerald-600' : 'text-red-500'
-                                    }`}>
-                                      {((totalReturn.positionValueUsd - (s.initialValueUsd ?? 0)) >= 0 ? '+' : '') +
-                                        formatUsd(totalReturn.positionValueUsd - (s.initialValueUsd ?? 0))}
-                                    </p>
-                                    <p className="text-[10px] mt-1.5 text-gray-400">deposit → withdraw</p>
-                                  </>
-                                ) : <p className="text-xl font-bold text-gray-300">—</p>}
-                              </div>
-
-                              {/* APY */}
-                              <div className="relative px-5 py-4 border-r border-white/50">
-                                <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-sky-400/70 to-blue-300/50" />
-                                <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2.5">APY</p>
-                                <p className={`text-xl font-bold tracking-tight ${
-                                  apy == null ? 'text-gray-400' : apy >= 0 ? 'text-sky-600' : 'text-red-500'
-                                }`}>
-                                  {apy == null ? '—' : (apy >= 0 ? '+' : '') + apy.toFixed(1) + '%'}
-                                </p>
-                                <p className="text-[10px] text-gray-400 mt-1.5">annualized · {days}d running</p>
-                              </div>
-
-                              {/* Time in range */}
-                              <div className="relative px-5 py-4">
-                                <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-violet-400/70 to-purple-300/50" />
-                                <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2.5">In Range</p>
-                                <p className={`text-xl font-bold tracking-tight ${
-                                  st.timeInRangePct >= 70 ? 'text-emerald-600' : st.timeInRangePct >= 40 ? 'text-amber-500' : 'text-red-500'
-                                }`}>
-                                  {st.timeInRangePct.toFixed(1)}%
-                                </p>
-                                <div className="mt-2 h-1 bg-white/70 rounded-full overflow-hidden">
-                                  <div className={`h-full rounded-full ${
-                                    st.timeInRangePct >= 70 ? 'bg-gradient-to-r from-emerald-400 to-teal-400' :
-                                    st.timeInRangePct >= 40 ? 'bg-amber-400' : 'bg-red-400'
-                                  }`} style={{ width: `${st.timeInRangePct}%` }} />
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Main grid */}
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-
-                          {/* Position card */}
-                          <div className="bg-white/50 backdrop-blur-md border border-white/70 rounded-2xl shadow-sm">
-                            <div className="bg-gradient-to-r from-blue-500/10 via-sky-400/6 to-transparent border-b border-blue-100/50 px-5 pt-4 pb-3 rounded-t-2xl">
-                              <div className="flex items-center justify-between mb-1">
-                                <div className="flex items-center gap-2">
-                                  <div className="w-0.5 h-4 rounded-full bg-gradient-to-b from-blue-400 to-sky-400" />
-                                  <h3 className="text-[10px] font-bold uppercase tracking-widest text-blue-500/90">Position</h3>
-                                </div>
-                                {pos && (
-                                  <div className="flex items-center gap-1.5 bg-white/60 border border-white/80 rounded-lg px-2.5 py-1">
-                                    <span className="text-[10px] text-gray-400">NFT</span>
-                                    <span className="text-xs font-mono font-bold text-gray-700">#{pos.tokenId}</span>
-                                    <span className={`text-[10px] font-bold ${BigInt(pos.liquidity) > 0n ? 'text-emerald-500' : 'text-red-400'}`}>
-                                      {BigInt(pos.liquidity) > 0n ? '●' : '○'}
-                                    </span>
-                                  </div>
-                                )}
-                              </div>
-                              {s.status === 'active' && pool && pos && (
-                                <>
-                                  <p className="text-3xl font-bold text-gray-900 tracking-tight leading-none mt-2">
-                                    ${Number(pool.price).toLocaleString('en-US', { maximumFractionDigits: 2 })}
-                                  </p>
-                                  <p className="text-xs text-gray-400 mt-1">{label0}/{label1} · {feeLabel(pos.fee)}</p>
-                                </>
-                              )}
-                            </div>
-                            <div className="px-5 py-4"
-                              style={{ backgroundImage: 'radial-gradient(circle, rgba(99,102,241,0.07) 1px, transparent 1px)', backgroundSize: '18px 18px' }}>
-                              {s.status !== 'active' ? (
-                                <div className="space-y-2">
-                                  <div className="flex items-center gap-3 bg-white/70 border border-white/80 rounded-xl px-3 py-2.5">
-                                    <span className="text-xs font-medium text-gray-400">NFT</span>
-                                    <span className="text-xs font-mono font-bold text-gray-700">#{s.currentTokenId}</span>
-                                    <span className="ml-auto text-xs text-gray-400">{label0}/{label1} · {feeLabel(s.fee)}</span>
-                                  </div>
-                                  <p className="text-xs text-gray-400 px-1">Live data available for active strategies only.</p>
-                                </div>
-                              ) : pos && pool ? (
-                                <>
-                                  <PriceRangeBar
-                                    tick={pool.tick} tickLower={pos.tickLower} tickUpper={pos.tickUpper}
-                                    decimals0={pool.decimals0} decimals1={pool.decimals1}
-                                  />
-                                  {liveToken0 && liveToken1 && ethPrice > 0 && (
-                                    <TokenRatioBar
-                                      token0Raw={liveToken0} token1Raw={liveToken1}
-                                      dec0={dec0} dec1={dec1} label0={label0} label1={label1} ethPrice={ethPrice}
-                                    />
-                                  )}
-                                </>
-                              ) : (
-                                <div className="flex items-center gap-2 text-gray-400 text-sm py-8 justify-center">
-                                  <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
-                                  </svg>
-                                  Loading…
-                                </div>
-                              )}
-                            </div>
-                          </div>
-
-                          {/* Right column */}
-                          <div className="flex flex-col gap-4">
-
-                            {/* Performance card */}
-                            <div className="bg-white/50 backdrop-blur-md border border-white/70 rounded-2xl shadow-sm">
-                              <div className="bg-gradient-to-r from-emerald-500/10 via-teal-400/6 to-transparent border-b border-emerald-100/50 px-5 pt-4 pb-3 rounded-t-2xl">
-                                <div className="flex items-center gap-2">
-                                  <div className="w-0.5 h-4 rounded-full bg-gradient-to-b from-emerald-400 to-teal-400" />
-                                  <h3 className="text-[10px] font-bold uppercase tracking-widest text-emerald-600/90">Performance</h3>
-                                </div>
-                              </div>
-                              <div className="px-5 py-4">
-                                {st ? (
-                                  <div className="space-y-1.5">
-
-                                    {/* Deposit row (at historical ETH price) */}
-                                    {s.initialValueUsd != null && (
-                                      <div className="flex justify-between items-start px-2.5 py-1.5 rounded-lg bg-gray-50/60 border border-gray-100/60">
-                                        <div>
-                                          <span className="text-xs font-medium text-gray-500">Deposited</span>
-                                          {s.openEthPriceUsd && (
-                                            <p className="text-[10px] text-gray-400 mt-0.5">ETH = ${s.openEthPriceUsd.toFixed(0)} at open</p>
-                                          )}
-                                        </div>
-                                        <span className="text-xs font-bold font-mono text-gray-700">{formatUsd(s.initialValueUsd)}</span>
-                                      </div>
-                                    )}
-
-                                    {/* Current/close position value */}
-                                    {totalReturn && (
-                                      <div className={`flex justify-between items-start px-2.5 py-1.5 rounded-lg border ${
-                                        s.status === 'active'
-                                          ? 'bg-blue-50/40 border-blue-100/50'
-                                          : 'bg-gray-50/40 border-gray-100/50'
-                                      }`}>
-                                        <div>
-                                          <span className="text-xs font-medium text-gray-500">
-                                            {s.status === 'active' ? 'Current position' : 'Withdrawn'}
-                                          </span>
-                                          {s.status === 'active' && ethPrice > 0 && (
-                                            <p className="text-[10px] text-gray-400 mt-0.5">ETH = ${ethPrice.toFixed(0)} now</p>
-                                          )}
-                                        </div>
-                                        <span className="text-xs font-bold font-mono text-gray-700">{formatUsd(totalReturn.positionValueUsd)}</span>
-                                      </div>
-                                    )}
-
-                                    {/* Fees earned */}
-                                    <div className="flex justify-between items-start px-2.5 py-1.5 rounded-lg bg-emerald-50/50 border border-emerald-100/60">
-                                      <span className="text-xs font-medium text-emerald-700 flex items-center gap-1.5 mt-0.5">
-                                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
-                                        Fees earned
-                                      </span>
-                                      <div className="text-right">
-                                        <p className="text-xs font-bold text-emerald-600 font-mono">
-                                          {totalReturn ? '+' + formatUsd(totalReturn.feesCollectedUsd) : '—'}
-                                        </p>
-                                        {st.feesCollectedToken0 !== '0' && (
-                                          <p className="text-[11px] text-gray-400 font-mono mt-0.5">
-                                            <RawAmount amount={st.feesCollectedToken0} decimals={dec0} label={label0} />
-                                            {' + '}
-                                            <RawAmount amount={st.feesCollectedToken1} decimals={dec1} label={label1} />
-                                          </p>
-                                        )}
-                                      </div>
-                                    </div>
-
-                                    {/* Unclaimed fees (active only) */}
-                                    {s.status === 'active' && pos && (() => {
-                                      const uf = computeUnclaimedFees(pos, ethPrice, dec0, dec1)
-                                      return uf ? (
-                                        <div className="flex justify-between items-start px-2.5 py-1.5 rounded-lg bg-sky-50/50 border border-sky-100/60">
-                                          <span className="text-xs font-medium text-sky-700 flex items-center gap-1.5 mt-0.5">
-                                            <span className="w-1.5 h-1.5 rounded-full bg-sky-400 shrink-0" />
-                                            Unclaimed fees
-                                          </span>
-                                          <div className="text-right">
-                                            <p className="text-xs font-bold text-sky-600 font-mono">+{formatUsd(uf.usd)}</p>
-                                            <p className="text-[11px] text-gray-400 font-mono mt-0.5">
-                                              {uf.t0.toFixed(6)} {label0} · {uf.t1.toFixed(2)} {label1}
-                                            </p>
-                                          </div>
-                                        </div>
-                                      ) : null
-                                    })()}
-
-                                    {/* Gas spent */}
-                                    <div className="flex justify-between items-start px-2.5 py-1.5 rounded-lg bg-red-50/50 border border-red-100/60">
-                                      <span className="text-xs font-medium text-red-600 flex items-center gap-1.5 mt-0.5">
-                                        <span className="w-1.5 h-1.5 rounded-full bg-red-400 shrink-0" />
-                                        Gas spent
-                                      </span>
-                                      <div className="text-right">
-                                        <p className="text-xs font-bold text-red-500 font-mono">
-                                          <Tooltip tip={`${st.gasCostWei} wei`}>
-                                            {totalReturn ? '−' + formatUsd(totalReturn.gasSpentUsd) : weiToEth(st.gasCostWei) + ' ETH'}
-                                          </Tooltip>
-                                        </p>
-                                        {totalReturn && (
-                                          <p className="text-[11px] text-gray-400 font-mono mt-0.5">{weiToEth(st.gasCostWei)} ETH</p>
-                                        )}
-                                      </div>
-                                    </div>
-
-                                    {/* IL row (active only) */}
-                                    {s.status === 'active' && ilResult && (
-                                      <div className={`flex justify-between items-start px-2.5 py-1.5 rounded-lg border ${
-                                        ilResult.ilUsd >= 0
-                                          ? 'bg-emerald-50/40 border-emerald-100/50'
-                                          : 'bg-orange-50/40 border-orange-100/50'
-                                      }`}>
-                                        <div>
-                                          <span className={`text-xs font-medium flex items-center gap-1.5 mt-0.5 ${ilResult.ilUsd >= 0 ? 'text-emerald-700' : 'text-orange-600'}`}>
-                                            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${ilResult.ilUsd >= 0 ? 'bg-emerald-400' : 'bg-orange-400'}`} />
-                                            Imperm. loss
-                                          </span>
-                                          <p className="text-[10px] text-gray-400 mt-0.5 ml-3">vs holding since open</p>
-                                        </div>
-                                        <div className="text-right">
-                                          <p className={`text-xs font-bold font-mono ${ilResult.ilUsd >= 0 ? 'text-emerald-600' : 'text-orange-500'}`}>
-                                            {ilResult.ilUsd >= 0 ? '+' : ''}{formatUsd(ilResult.ilUsd)}
-                                          </p>
-                                          <p className={`text-[10px] font-semibold mt-0.5 ${ilResult.ilUsd >= 0 ? 'text-emerald-500' : 'text-orange-400'}`}>
-                                            {ilResult.ilPct.toFixed(2)}%
-                                          </p>
-                                        </div>
-                                      </div>
-                                    )}
-
-                                    {/* Fees/gas ratio bar */}
-                                    {totalReturn && totalReturn.feesCollectedUsd > 0 && (
-                                      <div className="h-1 rounded-full overflow-hidden flex mx-2.5 mt-1 bg-gray-100">
-                                        <div className="h-full bg-gradient-to-r from-emerald-400 to-emerald-500"
-                                          style={{ width: `${Math.min((totalReturn.feesCollectedUsd / (totalReturn.feesCollectedUsd + totalReturn.gasSpentUsd)) * 100, 100)}%` }} />
-                                        <div className="h-full bg-gradient-to-r from-red-400 to-red-500"
-                                          style={{ width: `${Math.min((totalReturn.gasSpentUsd / (totalReturn.feesCollectedUsd + totalReturn.gasSpentUsd)) * 100, 100)}%` }} />
-                                      </div>
-                                    )}
-
-                                    {/* Break-even */}
-                                    {breakEven && (
-                                      <div className="px-2.5 pt-2 mt-1">
-                                        <div className="flex justify-between text-[10px] text-gray-400 mb-1">
-                                          <span className="font-semibold">
-                                            {breakEven.isBreakEven ? '✓ Gas recovered' : 'Gas recovery'}
-                                          </span>
-                                          <span>
-                                            {breakEven.isBreakEven
-                                              ? `${formatUsd(breakEven.feesCollectedUsd)} earned vs ${formatUsd(breakEven.breakEvenUsd)} gas`
-                                              : `${formatUsd(breakEven.remainingUsd)} remaining${breakEven.estimatedDays != null ? ` · ~${breakEven.estimatedDays}d` : ''}`
-                                            }
-                                          </span>
-                                        </div>
-                                        <div className="h-1 rounded-full overflow-hidden bg-gray-100">
-                                          <div className={`h-full rounded-full transition-all ${breakEven.isBreakEven ? 'bg-emerald-400' : 'bg-sky-400'}`}
-                                            style={{ width: `${Math.min((breakEven.feesCollectedUsd / breakEven.breakEvenUsd) * 100, 100)}%` }} />
-                                        </div>
-                                      </div>
-                                    )}
-
-                                    {/* Stopped snapshot */}
-                                    {s.status === 'stopped' && st.closeEthPriceUsd != null && (
-                                      <div className="pt-3 border-t border-gray-100/80 space-y-1">
-                                        <p className="text-[11px] text-gray-400 font-medium px-2.5">At close · ETH = {formatUsd(st.closeEthPriceUsd)}</p>
-                                      </div>
-                                    )}
-                                  </div>
-                                ) : (
-                                  <p className="text-xs text-gray-400 py-2 px-2.5">Loading…</p>
-                                )}
-                              </div>
-                            </div>
-
-                            {/* Config card */}
-                            <div className="bg-white/50 backdrop-blur-md border border-white/70 rounded-2xl shadow-sm">
-                              <div className="bg-gradient-to-r from-violet-500/10 via-purple-400/6 to-transparent border-b border-violet-100/50 px-5 pt-4 pb-3 rounded-t-2xl">
-                                <div className="flex items-center gap-2">
-                                  <div className="w-0.5 h-4 rounded-full bg-gradient-to-b from-violet-400 to-purple-400" />
-                                  <h3 className="text-[10px] font-bold uppercase tracking-widest text-violet-500/90">Config</h3>
-                                </div>
-                              </div>
-                              <div className="px-5 py-4">
-                                <div className="flex flex-wrap gap-2 mb-3">
-                                  {[
-                                    `±${(s.rangePercent * 100).toFixed(0)}% range`,
-                                    `${(s.slippageTolerance * 100).toFixed(2)}% slip`,
-                                    `${s.pollIntervalSeconds}s poll`,
-                                    feeLabel(s.fee) + ' fee',
-                                  ].map(tag => (
-                                    <span key={tag} className="inline-flex items-center px-2.5 py-1 rounded-lg bg-white/70 border border-white/90 text-xs font-semibold text-gray-600 shadow-sm">
-                                      {tag}
-                                    </span>
-                                  ))}
-                                </div>
-                                <div className="space-y-0.5">
-                                  <InfoRow label="Started" value={new Date(s.createdAt).toLocaleDateString()} />
-                                  {s.status !== 'stopped'
-                                    ? <InfoRow label="Running" value={`${days} days`} />
-                                    : s.stoppedAt ? <InfoRow label="Stopped" value={new Date(s.stoppedAt).toLocaleDateString()} /> : null
-                                  }
-                                  {s.initialToken0Amount && (
-                                    <InfoRow label={`Deposit ${label0}`} value={<RawAmount amount={s.initialToken0Amount} decimals={dec0} label={label0} />} />
-                                  )}
-                                  {s.initialToken1Amount && (
-                                    <InfoRow label={`Deposit ${label1}`} value={<RawAmount amount={s.initialToken1Amount} decimals={dec1} label={label1} />} />
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-
-                          </div>{/* end right column */}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* ── History tab ── */}
-                    {tab === 'history' && (
-                      <div className="bg-white/50 backdrop-blur-sm border border-white/70 rounded-2xl p-5 shadow-sm">
-                        <ActivityTimeline
-                          strategy={s}
-                          stats={st}
-                          events={rebalances[s.id]}
-                          dec0={dec0} dec1={dec1} label0={label0} label1={label1}
-                        />
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            )
-          })}
-        </div>
+        closedStrategies.length > 0 ? (
+          <div className="space-y-3">
+            {closedStrategies.map(renderStrategyCard)}
+          </div>
+        ) : (
+          <div className="bg-white/40 backdrop-blur-xl rounded-2xl border border-dashed border-gray-200 px-6 py-10 text-center">
+            <p className="text-sm font-medium text-gray-400">No closed strategies yet</p>
+            <p className="text-xs text-gray-400 mt-1">Strategies you stop will appear here.</p>
+          </div>
+        )
       )}
     </div>
   )
 }
+

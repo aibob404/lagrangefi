@@ -17,18 +17,21 @@ export default function App() {
           <Route path="/register" element={<RegisterPage />} />
 
           {/* Protected */}
-          <Route path="/strategies" element={
-            <ProtectedRoute><Layout><StrategyPage /></Layout></ProtectedRoute>
+          <Route path="/dashboard" element={
+            <ProtectedRoute><Layout><StrategyPage view="dashboard" /></Layout></ProtectedRoute>
+          } />
+          <Route path="/closed" element={
+            <ProtectedRoute><Layout><StrategyPage view="closed" /></Layout></ProtectedRoute>
           } />
           <Route path="/profile" element={
             <ProtectedRoute><Layout><ProfilePage /></Layout></ProtectedRoute>
           } />
 
           {/* Redirects */}
-          <Route path="/dashboard" element={<Navigate to="/strategies" replace />} />
-          <Route path="/wallet"    element={<Navigate to="/profile"    replace />} />
-          <Route path="/"          element={<Navigate to="/strategies" replace />} />
-          <Route path="*"          element={<Navigate to="/strategies" replace />} />
+          <Route path="/strategies" element={<Navigate to="/dashboard" replace />} />
+          <Route path="/wallet"     element={<Navigate to="/profile"   replace />} />
+          <Route path="/"           element={<Navigate to="/dashboard" replace />} />
+          <Route path="*"           element={<Navigate to="/dashboard" replace />} />
         </Routes>
       </AuthProvider>
     </BrowserRouter>

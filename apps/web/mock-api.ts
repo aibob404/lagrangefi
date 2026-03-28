@@ -49,9 +49,9 @@ const MOCK_STRATEGIES = [
     rangePercent: 10,
     slippageTolerance: 0.5,
     pollIntervalSeconds: 60,
-    status: 'active',
+    status: 'stopped',
     createdAt: new Date(now - 14 * DAY).toISOString(),
-    stoppedAt: null,
+    stoppedAt: new Date(now - 1 * DAY).toISOString(),
     initialToken0Amount: '350000000000000000',  // 0.35 WETH
     initialToken1Amount: '500000000',            // 500 USDC
     initialValueUsd: 1480.50,                    // 0.35 * 2801.43 + 500

@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext'
 
 function ActivityIcon() {
   return (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
     </svg>
   )
@@ -20,6 +20,16 @@ function LogOutIcon() {
   )
 }
 
+function ArchiveIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="21 8 21 21 3 21 3 8" />
+      <rect x="1" y="3" width="22" height="5" />
+      <line x1="10" y1="12" x2="14" y2="12" />
+    </svg>
+  )
+}
+
 function SettingsIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -28,7 +38,6 @@ function SettingsIcon() {
     </svg>
   )
 }
-
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   const { user, logout } = useAuth()
@@ -43,98 +52,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     navigate('/login')
   }
 
-  function closeMobile() {
-    setMobileOpen(false)
-  }
-
-  const navItem = (to: string, icon: React.ReactNode, label: string) => {
-    const active = isActive(to)
-    return (
-      <Link
-        to={to}
-        onClick={closeMobile}
-        className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-150 ${
-          active
-            ? 'bg-gray-900/90 text-white shadow-sm'
-            : 'text-gray-500 hover:text-gray-900 hover:bg-white/50'
-        }`}
-      >
-        {icon}
-        {label}
-      </Link>
-    )
-  }
-
-  const sidebarContent = (
-    <>
-      {/* Logo */}
-      <Link to="/strategies" onClick={closeMobile} className="flex items-center gap-2.5 px-4 py-5 border-b border-white/50 group">
-        <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 bg-gradient-to-br from-gray-800 to-gray-950 shadow-md group-hover:shadow-lg transition-shadow">
-          <span className="text-white font-bold text-sm leading-none">Δ</span>
-        </div>
-        <span className="text-gray-900 font-bold text-sm tracking-tight">lagrangefi</span>
-      </Link>
-
-      {/* Nav */}
-      {user && (
-        <nav className="flex-1 px-2 py-4 space-y-0.5">
-          {navItem('/strategies', <ActivityIcon />, 'Strategies')}
-        </nav>
-      )}
-
-      {/* Profile card */}
-      {user && (
-        <div className="mx-2 mb-3 border-t border-gray-200/70 pt-3">
-          <div className="bg-white/50 backdrop-blur-sm border border-white/70 rounded-2xl overflow-hidden shadow-sm">
-
-            {/* User info row */}
-            <Link to="/profile" onClick={closeMobile} className="flex items-center gap-3 px-3 pt-3 pb-2.5 hover:bg-white/40 transition-colors">
-              {/* Avatar */}
-              <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 bg-gradient-to-br from-gray-700 to-gray-950 shadow-md">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="12" cy="8" r="4"/>
-                  <path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/>
-                </svg>
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-semibold text-gray-900 truncate leading-tight">{user.username}</p>
-                <div className="flex items-center gap-1 mt-0.5">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
-                  <p className="text-xs text-gray-400 leading-tight">
-                    {user.hasWallet ? 'Wallet connected' : 'No wallet'}
-                  </p>
-                </div>
-              </div>
-            </Link>
-
-            {/* Action row */}
-            <div className="flex border-t border-white/60">
-              <Link
-                to="/profile"
-                onClick={closeMobile}
-                className="flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-medium text-gray-400 hover:text-gray-700 hover:bg-white/40 transition-all"
-              >
-                <SettingsIcon />
-                Settings
-              </Link>
-              <div className="w-px bg-white/60" />
-              <button
-                onClick={handleLogout}
-                className="flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-medium text-gray-400 hover:text-red-500 hover:bg-red-50/50 transition-all"
-              >
-                <LogOutIcon />
-                Log out
-              </button>
-            </div>
-
-          </div>
-        </div>
-      )}
-    </>
-  )
-
   return (
-    <div className="flex min-h-screen relative">
+    <div className="flex flex-col min-h-screen relative">
 
       {/* Ambient background blobs */}
       <div className="fixed inset-0 -z-10 overflow-hidden pointer-events-none">
@@ -143,55 +62,134 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         <div className="absolute top-1/2 left-1/3 -translate-y-1/2 w-[600px] h-[400px] bg-violet-400/15 rounded-full blur-[120px]" />
       </div>
 
-      {/* Desktop sidebar */}
-      <aside className="hidden md:flex w-56 backdrop-blur-2xl bg-white/40 border-r border-white/60 flex-col shrink-0 shadow-xl shadow-black/5 sticky top-0 h-screen">
-        {sidebarContent}
-      </aside>
+      {/* ── Top navbar ───────────────────────────────────────────────────────── */}
+      <header className="sticky top-0 z-30 backdrop-blur-2xl bg-white/50 border-b border-white/60 shadow-sm shadow-black/5">
+        <div className="relative max-w-7xl mx-auto px-4 sm:px-6 h-14 flex items-center">
 
-      {/* Mobile sidebar overlay */}
-      {mobileOpen && (
-        <div className="fixed inset-0 z-40 md:hidden">
-          {/* Backdrop */}
-          <div
-            className="absolute inset-0 bg-black/30 backdrop-blur-sm"
-            onClick={closeMobile}
-          />
-          {/* Drawer */}
-          <aside className="absolute left-0 top-0 h-full w-64 backdrop-blur-2xl bg-white/70 border-r border-white/60 flex flex-col shadow-2xl">
-            {sidebarContent}
-          </aside>
-        </div>
-      )}
-
-      {/* Main content */}
-      <div className="flex-1 flex flex-col min-h-screen">
-        {/* Mobile top bar */}
-        <div className="md:hidden flex items-center gap-3 px-4 py-3 bg-white/50 backdrop-blur-xl border-b border-white/60 sticky top-0 z-30">
-          <button
-            onClick={() => setMobileOpen(true)}
-            className="p-1.5 rounded-lg text-gray-500 hover:text-gray-900 hover:bg-white/60 transition-colors"
-            aria-label="Open menu"
-          >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="3" y1="6" x2="21" y2="6" />
-              <line x1="3" y1="12" x2="21" y2="12" />
-              <line x1="3" y1="18" x2="21" y2="18" />
-            </svg>
-          </button>
-          <Link to="/strategies" className="flex items-center gap-2 group">
-            <div className="w-6 h-6 rounded-md flex items-center justify-center bg-gradient-to-br from-gray-800 to-gray-950 shadow-sm">
-              <span className="text-white font-bold text-xs leading-none">Δ</span>
+          {/* Left — logo */}
+          <Link to="/dashboard" className="flex items-center gap-2 group shrink-0">
+            <div className="w-7 h-7 rounded-lg flex items-center justify-center bg-gradient-to-br from-gray-800 to-gray-950 shadow-md group-hover:shadow-lg transition-shadow">
+              <span className="text-white font-bold text-sm leading-none">Δ</span>
             </div>
-            <span className="text-gray-900 font-bold text-sm tracking-tight">lagrangefi</span>
+            <span className="hidden sm:block text-gray-900 font-bold text-sm tracking-tight">lagrangefi</span>
           </Link>
+
+          {/* Center — glass switcher (absolutely centered) */}
+          {user && (
+            <nav className="absolute left-1/2 -translate-x-1/2 flex items-center bg-white/25 backdrop-blur-md border border-white/50 rounded-full p-1 gap-0.5 shadow-[inset_0_1px_1px_rgba(255,255,255,0.6),0_1px_3px_rgba(0,0,0,0.08)]">
+              <Link
+                to="/dashboard"
+                className={`flex items-center gap-1.5 px-4 py-1.5 rounded-full text-sm font-medium transition-all duration-200 ${
+                  isActive('/dashboard')
+                    ? 'bg-white/85 text-gray-900 shadow-[0_1px_3px_rgba(0,0,0,0.12)] backdrop-blur-sm'
+                    : 'text-gray-500 hover:text-gray-800 hover:bg-white/35'
+                }`}
+              >
+                <ActivityIcon />
+                Dashboard
+              </Link>
+              <Link
+                to="/closed"
+                className={`flex items-center gap-1.5 px-4 py-1.5 rounded-full text-sm font-medium transition-all duration-200 ${
+                  isActive('/closed')
+                    ? 'bg-white/85 text-gray-900 shadow-[0_1px_3px_rgba(0,0,0,0.12)] backdrop-blur-sm'
+                    : 'text-gray-500 hover:text-gray-800 hover:bg-white/35'
+                }`}
+              >
+                <ArchiveIcon />
+                Closed Strategies
+              </Link>
+            </nav>
+          )}
+
+          {/* Right — user + logout */}
+          <div className="ml-auto flex items-center gap-2">
+            {user && (
+              <>
+                {/* Username + wallet pill — desktop */}
+                <Link
+                  to="/profile"
+                  className="hidden sm:flex items-center gap-2.5 px-3 py-1.5 rounded-xl bg-white/50 border border-white/70 hover:bg-white/80 hover:border-white/90 transition-all shadow-sm text-sm"
+                >
+                  <div className="w-6 h-6 rounded-lg flex items-center justify-center shrink-0 bg-gradient-to-br from-gray-700 to-gray-950 shadow-sm">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+                      <circle cx="12" cy="8" r="4"/>
+                      <path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/>
+                    </svg>
+                  </div>
+                  <span className="font-semibold text-gray-900 leading-none">{user.username}</span>
+                  <div className="flex items-center gap-1">
+                    <span className={`w-1.5 h-1.5 rounded-full ${user.hasWallet ? 'bg-emerald-500' : 'bg-gray-300'}`} />
+                    <span className="text-xs text-gray-400">{user.hasWallet ? 'Wallet' : 'No wallet'}</span>
+                  </div>
+                </Link>
+
+                {/* Log out — desktop */}
+                <button
+                  onClick={handleLogout}
+                  title="Log out"
+                  className="hidden sm:flex p-2 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50/60 transition-colors"
+                >
+                  <LogOutIcon />
+                </button>
+
+                {/* Hamburger — mobile */}
+                <button
+                  onClick={() => setMobileOpen(v => !v)}
+                  className="sm:hidden p-2 rounded-lg text-gray-500 hover:text-gray-900 hover:bg-white/60 transition-colors"
+                  aria-label={mobileOpen ? 'Close menu' : 'Open menu'}
+                >
+                  {mobileOpen ? (
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                    </svg>
+                  ) : (
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <line x1="3" y1="6" x2="21" y2="6" /><line x1="3" y1="12" x2="21" y2="12" /><line x1="3" y1="18" x2="21" y2="18" />
+                    </svg>
+                  )}
+                </button>
+              </>
+            )}
+          </div>
         </div>
 
-        <main className="flex-1 overflow-y-auto">
-          <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
-            {children}
+        {/* Mobile dropdown — user actions only (nav is always visible in bar) */}
+        {mobileOpen && user && (
+          <div className="sm:hidden border-t border-white/50 bg-white/60 backdrop-blur-xl px-4 py-3 space-y-1">
+            <Link
+              to="/profile"
+              onClick={() => setMobileOpen(false)}
+              className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm text-gray-600 hover:text-gray-900 hover:bg-white/60 transition-colors"
+            >
+              <div className="w-6 h-6 rounded-lg flex items-center justify-center shrink-0 bg-gradient-to-br from-gray-700 to-gray-950 shadow-sm">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/>
+                </svg>
+              </div>
+              <span className="font-medium">{user.username}</span>
+              <div className="flex items-center gap-1 ml-1">
+                <span className={`w-1.5 h-1.5 rounded-full ${user.hasWallet ? 'bg-emerald-500' : 'bg-gray-300'}`} />
+                <span className="text-xs text-gray-400">{user.hasWallet ? 'Wallet connected' : 'No wallet'}</span>
+              </div>
+            </Link>
+            <button
+              onClick={() => { handleLogout(); setMobileOpen(false) }}
+              className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm text-red-500 hover:bg-red-50/60 transition-colors"
+            >
+              <LogOutIcon />
+              Log out
+            </button>
           </div>
-        </main>
-      </div>
+        )}
+      </header>
+
+      {/* Main content — now full-width */}
+      <main className="flex-1">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
+          {children}
+        </div>
+      </main>
     </div>
   )
 }

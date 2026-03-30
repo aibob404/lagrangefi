@@ -1,4 +1,4 @@
-import type { Strategy, StrategyStats, RebalanceEvent } from './types'
+import type { Strategy, StrategyStats, StrategyEvent } from './types'
 
 // ── Token helpers ────────────────────────────────────────────────────────────
 
@@ -77,15 +77,15 @@ export function computeTotalReturn(
 
   let positionValueUsd: number
 
-  if (strategy.status === 'stopped') {
-    if (stats.closeToken0Amount && stats.closeToken1Amount && stats.closeEthPriceUsd) {
-      const c0 = rawToFloat(stats.closeToken0Amount, dec0)
-      const c1 = rawToFloat(stats.closeToken1Amount, dec1)
+  if (strategy.status === 'STOPPED_MANUALLY' || strategy.status === 'STOPPED_ON_ERROR') {
+    if (strategy.endToken0Amount && strategy.endToken1Amount && strategy.endEthPriceUsd) {
+      const c0 = rawToFloat(strategy.endToken0Amount, dec0)
+      const c1 = rawToFloat(strategy.endToken1Amount, dec1)
       positionValueUsd = label0.includes('WETH')
-        ? c0 * stats.closeEthPriceUsd + c1
-        : c1 * stats.closeEthPriceUsd + c0
-    } else if (stats.closeValueUsd != null) {
-      positionValueUsd = stats.closeValueUsd
+        ? c0 * strategy.endEthPriceUsd + c1
+        : c1 * strategy.endEthPriceUsd + c0
+    } else if (strategy.endValueUsd != null) {
+      positionValueUsd = strategy.endValueUsd
     } else {
       return null
     }
@@ -105,7 +105,7 @@ export function computeTotalReturn(
 
   const gasSpentUsd = stats.gasCostUsd > 0
     ? stats.gasCostUsd
-    : (rawToFloat(stats.gasCostWei, 18) * currentEthPrice)
+    : ((stats.gasCostWei / 1e18) * currentEthPrice)
 
   const totalReturnUsd = (positionValueUsd + feesCollectedUsd) - strategy.initialValueUsd
   const totalReturnPct = strategy.initialValueUsd > 0
@@ -196,17 +196,18 @@ export interface RebalanceProfit {
 }
 
 export function computeRebalanceProfit(
-  event: RebalanceEvent,
+  event: StrategyEvent,
   dec0: number,
   dec1: number,
   label0: string,
 ): RebalanceProfit | null {
-  if (!event.feesCollectedToken0 || !event.feesCollectedToken1 || !event.gasCostWei || !event.ethPriceUsd) return null
-  const ethPrice = parseFloat(event.ethPriceUsd)
-  const f0 = rawToFloat(event.feesCollectedToken0, dec0)
-  const f1 = rawToFloat(event.feesCollectedToken1, dec1)
+  const d = event.rebalanceDetails
+  if (!d?.feesCollectedToken0 || !d?.feesCollectedToken1 || d?.gasUsedWei == null || d?.ethPriceUsd == null) return null
+  const ethPrice = d.ethPriceUsd
+  const f0 = rawToFloat(d.feesCollectedToken0, dec0)
+  const f1 = rawToFloat(d.feesCollectedToken1, dec1)
   const feesUsd = label0.includes('WETH') ? f0 * ethPrice + f1 : f1 * ethPrice + f0
-  const gasUsd = rawToFloat(event.gasCostWei, 18) * ethPrice
+  const gasUsd = (d.gasUsedWei / 1e18) * ethPrice
   const netUsd = feesUsd - gasUsd
   return { feesUsd, gasUsd, netUsd, isProfitable: netUsd >= 0 }
 }

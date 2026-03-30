@@ -1,6 +1,6 @@
 import type {
   Position, PoolState, Strategy, StrategyStats,
-  RebalanceEvent, User, CreateStrategyRequest,
+  StrategyEvent, User, CreateStrategyRequest,
 } from './types'
 
 const TOKEN_KEY = 'lagrangefi_token'
@@ -132,7 +132,7 @@ export async function fetchStrategyStats(id: number): Promise<StrategyStats> {
   return apiFetch(`/api/v1/strategies/${id}/stats`)
 }
 
-export async function fetchStrategyRebalances(id: number): Promise<RebalanceEvent[]> {
+export async function fetchStrategyRebalances(id: number): Promise<StrategyEvent[]> {
   return apiFetch(`/api/v1/strategies/${id}/rebalances`)
 }
 
@@ -146,6 +146,6 @@ export async function fetchPoolState(): Promise<PoolState> {
   return apiFetch('/api/v1/pool-state')
 }
 
-export async function fetchRebalances(): Promise<RebalanceEvent[]> {
+export async function fetchRebalances(): Promise<StrategyEvent[]> {
   return apiFetch('/api/v1/rebalances')
 }

@@ -6,7 +6,7 @@ import {
   fetchStrategyStats, fetchStrategyRebalances,
   fetchPosition, fetchPoolState, fetchWalletBalances,
 } from '../api'
-import type { Strategy, StrategyStats, RebalanceEvent, Position, PoolState } from '../types'
+import type { Strategy, StrategyStats, StrategyEvent, Position, PoolState } from '../types'
 import { useAuth } from '../context/AuthContext'
 import {
   computeIL, computeTotalReturn, computeAPY, computeBreakEven,
@@ -40,7 +40,7 @@ function formatPrice(p: number) { return p.toLocaleString('en-US', { maximumFrac
 function formatUsd(n: number) {
   return n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 })
 }
-function weiToEth(wei: string) { return (Number(BigInt(wei)) / 1e18).toFixed(6) }
+function weiToEth(wei: number) { return (wei / 1e18).toFixed(6) }
 const SUBSCRIPT_DIGITS = '₀₁₂₃₄₅₆₇₈₉'
 function toSub(n: number) {
   return n.toString().split('').map(d => SUBSCRIPT_DIGITS[+d]).join('')
@@ -83,15 +83,28 @@ function computeUnclaimedFees(pos: Position, ethPrice: number, dec0: number, dec
 // ── Sub-components ───────────────────────────────────────────────────────────
 
 const STATUS_STYLES: Record<string, string> = {
-  active:  'bg-emerald-50 text-emerald-700 border border-emerald-200',
-  stopped: 'bg-gray-100 text-gray-500 border border-gray-200',
+  ACTIVE:           'bg-emerald-50 text-emerald-700 border border-emerald-200',
+  INITIATING:       'bg-blue-50 text-blue-700 border border-blue-200',
+  STOPPED_MANUALLY: 'bg-gray-100 text-gray-500 border border-gray-200',
+  STOPPED_ON_ERROR: 'bg-red-50 text-red-600 border border-red-200',
+}
+const STATUS_LABELS: Record<string, string> = {
+  ACTIVE:           'Active',
+  INITIATING:       'Starting',
+  STOPPED_MANUALLY: 'Stopped',
+  STOPPED_ON_ERROR: 'Error',
+}
+
+function isStopped(status: string) {
+  return status === 'STOPPED_MANUALLY' || status === 'STOPPED_ON_ERROR'
 }
 
 function StatusBadge({ status }: { status: string }) {
   return (
-    <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold ${STATUS_STYLES[status] ?? STATUS_STYLES.stopped}`}>
-      {status === 'active' && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />}
-      {status}
+    <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold ${STATUS_STYLES[status] ?? STATUS_STYLES.STOPPED_MANUALLY}`}>
+      {status === 'ACTIVE' && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />}
+      {status === 'INITIATING' && <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />}
+      {STATUS_LABELS[status] ?? status}
     </span>
   )
 }
@@ -269,8 +282,8 @@ function TimelineEventRow({
   )
 }
 
-function OpenedEvent({ strategy, dec0, dec1, label0, label1, expanded, onToggle, isLast }: {
-  strategy: Strategy; dec0: number; dec1: number; label0: string; label1: string
+function OpenedEvent({ strategy, openEvent, dec0, dec1, label0, label1, expanded, onToggle, isLast }: {
+  strategy: Strategy; openEvent: StrategyEvent | undefined; dec0: number; dec1: number; label0: string; label1: string
   expanded: boolean; onToggle: () => void; isLast?: boolean
 }) {
   const depositUsd = depositValueAtOpen(strategy, dec0, dec1, label0) ?? strategy.initialValueUsd
@@ -328,31 +341,32 @@ function OpenedEvent({ strategy, dec0, dec1, label0, label1, expanded, onToggle,
           )}
         </div>
 
-        {strategy.openTxHashes && (() => {
-          const openHashes: string[] = JSON.parse(strategy.openTxHashes)
-          return openHashes.length > 0 && (
-            <div className="bg-white/60 border border-white/80 rounded-xl p-4">
-              <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-3">Transactions</p>
-              <TxList hashes={openHashes} steps={['Approve', 'Mint Position']} />
-            </div>
-          )
-        })()}
+        {openEvent && openEvent.transactions.length > 0 && (
+          <div className="bg-white/60 border border-white/80 rounded-xl p-4">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-3">Transactions</p>
+            <TxList
+              hashes={openEvent.transactions.map(t => t.txHash)}
+              steps={openEvent.transactions.map(t => t.action)}
+            />
+          </div>
+        )}
       </div>
     </TimelineEventRow>
   )
 }
 
 function RebalanceEventRow({ event, index, dec0, dec1, label0, label1, expanded, onToggle }: {
-  event: RebalanceEvent; index: number; dec0: number; dec1: number
+  event: StrategyEvent; index: number; dec0: number; dec1: number
   label0: string; label1: string; expanded: boolean; onToggle: () => void
 }) {
+  const d = event.rebalanceDetails
   const profit = computeRebalanceProfit(event, dec0, dec1, label0)
-  const ethPrice = event.ethPriceUsd ? parseFloat(event.ethPriceUsd) : 0
+  const ethPrice = d?.ethPriceUsd ?? 0
 
   let metric: string
   let metricClass: string
   if (event.status === 'failed') {
-    const gasUsd = event.gasCostWei && ethPrice > 0 ? rawToFloat(event.gasCostWei, 18) * ethPrice : null
+    const gasUsd = d?.gasUsedWei != null && ethPrice > 0 ? (d.gasUsedWei / 1e18) * ethPrice : null
     metric = gasUsd != null ? `−${formatUsd(gasUsd)} gas` : 'Failed'
     metricClass = 'text-red-500'
   } else if (profit) {
@@ -362,26 +376,26 @@ function RebalanceEventRow({ event, index, dec0, dec1, label0, label1, expanded,
     metric = '—'; metricClass = 'text-gray-400'
   }
 
-  const hashes = event.txHashes ? JSON.parse(event.txHashes) as string[] : []
-  const steps = event.txSteps ? JSON.parse(event.txSteps) as string[] : null
+  const hashes = event.transactions.map(t => t.txHash)
+  const steps = event.transactions.map(t => t.action)
 
-  const posBefore = (event.positionToken0Start && event.positionToken1Start && ethPrice > 0) ? (() => {
-    const t0 = rawToFloat(event.positionToken0Start!, dec0)
-    const t1 = rawToFloat(event.positionToken1Start!, dec1)
+  const posBefore = (d?.positionToken0Start && d?.positionToken1Start && ethPrice > 0) ? (() => {
+    const t0 = rawToFloat(d.positionToken0Start!, dec0)
+    const t1 = rawToFloat(d.positionToken1Start!, dec1)
     return { t0, t1, usd: label0.includes('WETH') ? t0 * ethPrice + t1 : t1 * ethPrice + t0 }
   })() : null
 
-  const posAfter = (event.positionToken0End && event.positionToken1End && ethPrice > 0) ? (() => {
-    const t0 = rawToFloat(event.positionToken0End!, dec0)
-    const t1 = rawToFloat(event.positionToken1End!, dec1)
+  const posAfter = (d?.positionToken0End && d?.positionToken1End && ethPrice > 0) ? (() => {
+    const t0 = rawToFloat(d.positionToken0End!, dec0)
+    const t1 = rawToFloat(d.positionToken1End!, dec1)
     return { t0, t1, usd: label0.includes('WETH') ? t0 * ethPrice + t1 : t1 * ethPrice + t0 }
   })() : null
 
-  const ratioBefore = (event.positionToken0Start && event.positionToken1Start && ethPrice > 0)
-    ? computeTokenRatio(event.positionToken0Start!, event.positionToken1Start!, dec0, dec1, label0, ethPrice)
+  const ratioBefore = (d?.positionToken0Start && d?.positionToken1Start && ethPrice > 0)
+    ? computeTokenRatio(d.positionToken0Start!, d.positionToken1Start!, dec0, dec1, label0, ethPrice)
     : null
-  const ratioAfter = (event.positionToken0End && event.positionToken1End && ethPrice > 0)
-    ? computeTokenRatio(event.positionToken0End!, event.positionToken1End!, dec0, dec1, label0, ethPrice)
+  const ratioAfter = (d?.positionToken0End && d?.positionToken1End && ethPrice > 0)
+    ? computeTokenRatio(d.positionToken0End!, d.positionToken1End!, dec0, dec1, label0, ethPrice)
     : null
 
   return (
@@ -394,8 +408,8 @@ function RebalanceEventRow({ event, index, dec0, dec1, label0, label1, expanded,
       label={`Rebalance #${index}`}
       subtitle={event.status === 'failed'
         ? (event.errorMessage ?? 'Failed')
-        : (event.newTickLower != null
-          ? `New range: $${formatPrice(tickToPrice(event.newTickLower, dec0, dec1))} → $${formatPrice(tickToPrice(event.newTickUpper!, dec0, dec1))}`
+        : (d?.newTickLower != null
+          ? `New range: $${formatPrice(tickToPrice(d.newTickLower, dec0, dec1))} → $${formatPrice(tickToPrice(d.newTickUpper!, dec0, dec1))}`
           : undefined)}
       date={formatEventDate(event.triggeredAt)}
       metric={metric}
@@ -407,9 +421,9 @@ function RebalanceEventRow({ event, index, dec0, dec1, label0, label1, expanded,
         {event.status === 'failed' ? (
           <div className="bg-red-50/60 border border-red-200/60 rounded-xl p-4">
             <p className="text-xs font-semibold text-red-700">Error: {event.errorMessage ?? 'Unknown error'}</p>
-            {event.gasCostWei && ethPrice > 0 && (
+            {d?.gasUsedWei != null && ethPrice > 0 && (
               <p className="text-xs text-red-500 mt-2">
-                Gas lost: {formatUsd(rawToFloat(event.gasCostWei, 18) * ethPrice)} ({weiToEth(event.gasCostWei)} ETH @ ${ethPrice.toFixed(0)})
+                Gas lost: {formatUsd((d.gasUsedWei / 1e18) * ethPrice)} ({weiToEth(d.gasUsedWei)} ETH @ ${ethPrice.toFixed(0)})
               </p>
             )}
           </div>
@@ -449,11 +463,11 @@ function RebalanceEventRow({ event, index, dec0, dec1, label0, label1, expanded,
                   </span>
                   <div className="text-right">
                     <p className="text-xs font-bold font-mono text-emerald-600">+{formatUsd(profit.feesUsd)}</p>
-                    {event.feesCollectedToken0 && (
+                    {d?.feesCollectedToken0 && (
                       <p className="text-[10px] text-gray-400 font-mono mt-0.5">
-                        <RawAmount amount={event.feesCollectedToken0} decimals={dec0} label={label0} />
+                        <RawAmount amount={d.feesCollectedToken0} decimals={dec0} label={label0} />
                         {' + '}
-                        <RawAmount amount={event.feesCollectedToken1 ?? '0'} decimals={dec1} label={label1} />
+                        <RawAmount amount={d.feesCollectedToken1 ?? '0'} decimals={dec1} label={label1} />
                       </p>
                     )}
                   </div>
@@ -465,7 +479,7 @@ function RebalanceEventRow({ event, index, dec0, dec1, label0, label1, expanded,
                   </span>
                   <span className="text-xs font-bold font-mono text-red-500">
                     −{formatUsd(profit.gasUsd)}
-                    {event.gasCostWei && <span className="text-[10px] text-gray-400 ml-1">({weiToEth(event.gasCostWei)} ETH)</span>}
+                    {d?.gasUsedWei != null && <span className="text-[10px] text-gray-400 ml-1">({weiToEth(d.gasUsedWei)} ETH)</span>}
                   </span>
                 </div>
                 <div className="flex justify-between items-center pt-1.5 border-t border-gray-100">
@@ -518,36 +532,38 @@ function RebalanceEventRow({ event, index, dec0, dec1, label0, label1, expanded,
   )
 }
 
-function ClosedEvent({ strategy, stats, dec0, dec1, label0, label1, expanded, onToggle }: {
-  strategy: Strategy; stats: StrategyStats; dec0: number; dec1: number
-  label0: string; label1: string; expanded: boolean; onToggle: () => void
+function ClosedEvent({ strategy, stats, closeEvent, dec0, dec1, label0, label1, expanded, onToggle }: {
+  strategy: Strategy; stats: StrategyStats; closeEvent: StrategyEvent | undefined
+  dec0: number; dec1: number; label0: string; label1: string; expanded: boolean; onToggle: () => void
 }) {
   const depositUsd = depositValueAtOpen(strategy, dec0, dec1, label0) ?? strategy.initialValueUsd
 
-  // Prefer computing from raw amounts + decimals (correct dec0/dec1 context).
-  // Only fall back to pre-computed closeValueUsd if raw amounts are unavailable.
   const withdrawUsd = (() => {
-    if (stats.closeToken0Amount && stats.closeToken1Amount && stats.closeEthPriceUsd) {
-      const t0 = rawToFloat(stats.closeToken0Amount, dec0)
-      const t1 = rawToFloat(stats.closeToken1Amount, dec1)
-      return label0.includes('WETH') ? t0 * stats.closeEthPriceUsd + t1 : t1 * stats.closeEthPriceUsd + t0
+    if (strategy.endToken0Amount && strategy.endToken1Amount && strategy.endEthPriceUsd) {
+      const t0 = rawToFloat(strategy.endToken0Amount, dec0)
+      const t1 = rawToFloat(strategy.endToken1Amount, dec1)
+      return label0.includes('WETH') ? t0 * strategy.endEthPriceUsd + t1 : t1 * strategy.endEthPriceUsd + t0
     }
-    return stats.closeValueUsd ?? null
+    return strategy.endValueUsd ?? null
   })()
 
   const positionDelta = (depositUsd != null && withdrawUsd != null) ? withdrawUsd - depositUsd : null
-  const feesUsd = stats.closeFeesUsd ?? stats.feesCollectedUsd
-  const gasUsd = stats.closeGasUsd ?? stats.gasCostUsd
+  const feesUsd = stats.feesCollectedUsd
+  const gasUsd = stats.gasCostUsd
   const netUsd = positionDelta != null ? positionDelta + feesUsd - gasUsd : null
   const netPct = (netUsd != null && depositUsd) ? (netUsd / depositUsd) * 100 : null
+
+  const subtitle = strategy.status === 'STOPPED_ON_ERROR'
+    ? (strategy.stopReason ?? 'Stopped on error')
+    : strategy.endEthPriceUsd ? `ETH = ${formatUsd(strategy.endEthPriceUsd)}` : undefined
 
   return (
     <TimelineEventRow
       iconBg="bg-gray-100 border border-gray-200"
       icon={<svg className="w-4 h-4 text-gray-500" fill="currentColor" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>}
-      dotColor="bg-gray-400"
+      dotColor={strategy.status === 'STOPPED_ON_ERROR' ? 'bg-red-400' : 'bg-gray-400'}
       label="Strategy Closed"
-      subtitle={stats.closeEthPriceUsd ? `ETH = ${formatUsd(stats.closeEthPriceUsd)}` : undefined}
+      subtitle={subtitle}
       date={strategy.stoppedAt ? formatEventDate(strategy.stoppedAt) : '—'}
       metric={netUsd != null ? `NET ${netUsd >= 0 ? '+' : ''}${formatUsd(netUsd)}` : '—'}
       metricClass={netUsd == null ? 'text-gray-400' : netUsd >= 0 ? 'text-emerald-600' : 'text-red-500'}
@@ -576,10 +592,10 @@ function ClosedEvent({ strategy, stats, dec0, dec1, label0, label1, expanded, on
           <div className="flex justify-between items-start">
             <div>
               <p className="text-xs font-semibold text-gray-600">Withdrawn</p>
-              {stats.closeToken0Amount && stats.closeToken1Amount && (
+              {strategy.endToken0Amount && strategy.endToken1Amount && (
                 <p className="text-[11px] text-gray-400 mt-0.5">
-                  {rawToFloat(stats.closeToken0Amount, dec0).toFixed(4)} {label0} + {rawToFloat(stats.closeToken1Amount, dec1).toFixed(2)} {label1}
-                  {stats.closeEthPriceUsd ? ` at $${stats.closeEthPriceUsd.toFixed(0)}` : ''}
+                  {rawToFloat(strategy.endToken0Amount, dec0).toFixed(4)} {label0} + {rawToFloat(strategy.endToken1Amount, dec1).toFixed(2)} {label1}
+                  {strategy.endEthPriceUsd ? ` at $${strategy.endEthPriceUsd.toFixed(0)}` : ''}
                 </p>
               )}
             </div>
@@ -630,15 +646,15 @@ function ClosedEvent({ strategy, stats, dec0, dec1, label0, label1, expanded, on
           )}
         </div>
 
-        {stats.closeTxHashes && (() => {
-          const closeHashes: string[] = JSON.parse(stats.closeTxHashes)
-          return closeHashes.length > 0 && (
-            <div className="bg-white/60 border border-white/80 rounded-xl p-3">
-              <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2.5">Transactions</p>
-              <TxList hashes={closeHashes} steps={['Remove Liquidity', 'Collect Tokens', 'Burn NFT', 'Unwrap WETH']} />
-            </div>
-          )
-        })()}
+        {closeEvent && closeEvent.transactions.length > 0 && (
+          <div className="bg-white/60 border border-white/80 rounded-xl p-3">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2.5">Transactions</p>
+            <TxList
+              hashes={closeEvent.transactions.map(t => t.txHash)}
+              steps={closeEvent.transactions.map(t => t.action)}
+            />
+          </div>
+        )}
       </div>
     </TimelineEventRow>
   )
@@ -646,7 +662,7 @@ function ClosedEvent({ strategy, stats, dec0, dec1, label0, label1, expanded, on
 
 function ActivityTimeline({ strategy, stats, events, dec0, dec1, label0, label1 }: {
   strategy: Strategy; stats: StrategyStats | undefined
-  events: RebalanceEvent[] | undefined
+  events: StrategyEvent[] | undefined
   dec0: number; dec1: number; label0: string; label1: string
 }) {
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set())
@@ -663,25 +679,29 @@ function ActivityTimeline({ strategy, stats, events, dec0, dec1, label0, label1 
     return <p className="text-gray-400 text-sm text-center py-8">Loading…</p>
   }
 
-  const sorted = [...events].sort(
+  const rebalanceEvents = [...events.filter(e => e.action === 'REBALANCE')].sort(
     (a, b) => new Date(b.triggeredAt).getTime() - new Date(a.triggeredAt).getTime()
   )
-  const totalRows = (strategy.status === 'stopped' ? 1 : 0) + sorted.length + 1
+  const openEvent = events.find(e => e.action === 'START_STRATEGY')
+  const closeEvent = events.find(e => e.action === 'CLOSE_STRATEGY')
+  const stopped = isStopped(strategy.status)
+  const totalRows = (stopped ? 1 : 0) + rebalanceEvents.length + 1
 
   return (
     <div className="space-y-0">
-      {strategy.status === 'stopped' && stats && (
+      {stopped && stats && (
         <ClosedEvent
-          strategy={strategy} stats={stats} dec0={dec0} dec1={dec1} label0={label0} label1={label1}
+          strategy={strategy} stats={stats} closeEvent={closeEvent}
+          dec0={dec0} dec1={dec1} label0={label0} label1={label1}
           expanded={expandedKeys.has('closed')} onToggle={() => toggle('closed')}
         />
       )}
 
-      {sorted.map((event, idx) => (
+      {rebalanceEvents.map((event, idx) => (
         <RebalanceEventRow
           key={event.id}
           event={event}
-          index={sorted.length - idx}
+          index={rebalanceEvents.length - idx}
           dec0={dec0} dec1={dec1} label0={label0} label1={label1}
           expanded={expandedKeys.has(`r-${event.id}`)}
           onToggle={() => toggle(`r-${event.id}`)}
@@ -689,7 +709,7 @@ function ActivityTimeline({ strategy, stats, events, dec0, dec1, label0, label1 
       ))}
 
       <OpenedEvent
-        strategy={strategy} dec0={dec0} dec1={dec1} label0={label0} label1={label1}
+        strategy={strategy} openEvent={openEvent} dec0={dec0} dec1={dec1} label0={label0} label1={label1}
         expanded={expandedKeys.has('opened')} onToggle={() => toggle('opened')}
         isLast={totalRows > 0}
       />
@@ -748,7 +768,7 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
 
   const [strategies,    setStrategies]  = useState<Strategy[]>([])
   const [stats,         setStats]       = useState<Record<number, StrategyStats>>({})
-  const [rebalances,    setRebalances]  = useState<Record<number, RebalanceEvent[]>>({})
+  const [rebalances,    setRebalances]  = useState<Record<number, StrategyEvent[]>>({})
   const [positions,     setPositions]   = useState<Record<number, Position>>({})
   const [poolStates,    setPoolStates]  = useState<Record<number, PoolState>>({})
   const [expandedId,    setExpandedId]  = useState<number | null>(null)
@@ -799,7 +819,7 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
 
   // Auto-load data for the active strategy whenever it first appears (or changes)
   useEffect(() => {
-    const active = strategies.find(s => s.status === 'active')
+    const active = strategies.find(s => s.status === 'ACTIVE')
     if (!active) return
     if (autoLoadedActiveRef.current === active.id) return
     autoLoadedActiveRef.current = active.id
@@ -842,7 +862,7 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
     if (expandedId === id) { setExpandedId(null); return }
     setExpandedId(id)
     const strategy = strategies.find(s => s.id === id)
-    await loadStrategyData(id, strategy?.status === 'active')
+    await loadStrategyData(id, strategy?.status === 'ACTIVE')
   }
 
   function setTab(id: number, tab: 'overview' | 'history') {
@@ -886,7 +906,7 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
     }
   }
 
-  const hasActive = strategies.some(s => s.status === 'active')
+  const hasActive = strategies.some(s => s.status === 'ACTIVE')
 
   const prevHasActiveRef = useRef(hasActive)
   useEffect(() => {
@@ -897,8 +917,8 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
     prevHasActiveRef.current = hasActive
   }, [hasActive, formState])
 
-  const activeStrategies = strategies.filter(s => s.status === 'active')
-  const closedStrategies = strategies.filter(s => s.status === 'stopped')
+  const activeStrategies = strategies.filter(s => s.status === 'ACTIVE' || s.status === 'INITIATING')
+  const closedStrategies = strategies.filter(s => isStopped(s.status))
 
   function renderStrategyCard(s: Strategy) {
     const pos      = positions[s.id]
@@ -908,18 +928,18 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
     const dec1     = s.token1Decimals ?? 6
     const label0   = tokenLabel(s.token0)
     const label1   = tokenLabel(s.token1)
-    const ethPrice = pool ? parseFloat(pool.price) : (st?.closeEthPriceUsd ?? 0)
+    const ethPrice = pool ? parseFloat(pool.price) : (s.endEthPriceUsd ?? 0)
     const inRange  = pool && pos ? pool.tick >= pos.tickLower && pool.tick < pos.tickUpper : null
 
-    const latestSuccess = rebalances[s.id]?.find(r => r.status === 'success' && r.positionToken0End)
-    const liveToken0 = pos?.amount0 ?? latestSuccess?.positionToken0End ?? null
-    const liveToken1 = pos?.amount1 ?? latestSuccess?.positionToken1End ?? null
+    const latestSuccess = rebalances[s.id]?.find(r => r.action === 'REBALANCE' && r.status === 'success' && r.rebalanceDetails?.positionToken0End)
+    const liveToken0 = pos?.amount0 ?? latestSuccess?.rebalanceDetails?.positionToken0End ?? null
+    const liveToken1 = pos?.amount1 ?? latestSuccess?.rebalanceDetails?.positionToken1End ?? null
 
     const totalReturn = st ? computeTotalReturn(
       s, st, dec0, dec1, label0, ethPrice,
       liveToken0 ?? undefined, liveToken1 ?? undefined,
     ) : null
-    const ilResult = (s.status === 'active' && liveToken0 && liveToken1 && ethPrice > 0)
+    const ilResult = (s.status === 'ACTIVE' && liveToken0 && liveToken1 && ethPrice > 0)
       ? computeIL(s, dec0, dec1, label0, ethPrice, liveToken0, liveToken1) : null
     const days = daysRunning(s.createdAt)
     const apy = (totalReturn?.totalReturnUsd != null && s.initialValueUsd && days > 0)
@@ -928,16 +948,16 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
     const tab = tabMap[s.id] ?? 'overview'
 
     // Active strategy is always expanded; closed strategies toggle on click
-    const isAlwaysExpanded = s.status === 'active'
+    const isAlwaysExpanded = s.status === 'ACTIVE' || s.status === 'INITIATING'
     const isExpanded = isAlwaysExpanded || expandedId === s.id
 
     return (
       <div key={s.id} className={`relative backdrop-blur-xl rounded-2xl border shadow-lg transition-shadow hover:shadow-xl ${
-        s.status === 'active'
+        !isStopped(s.status)
           ? 'bg-white/65 border-white/70 shadow-emerald-100/50'
           : 'bg-white/50 border-white/60'
       }`}>
-        {s.status === 'active' && (
+        {!isStopped(s.status) && (
           <div className="absolute top-0 left-0 right-0 h-0.5 rounded-t-2xl bg-gradient-to-r from-emerald-400 via-teal-300 to-emerald-400" />
         )}
 
@@ -952,12 +972,12 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
             <span className="text-xs text-gray-400 font-mono shrink-0 hidden sm:inline">
               {label0}/{label1} · {feeLabel(s.fee)}
             </span>
-            {s.status !== 'stopped' && (
+            {!isStopped(s.status) && (
               <span className="text-xs text-gray-400 shrink-0 hidden md:inline">
                 {days}d running
               </span>
             )}
-            {s.status === 'active' && inRange !== null && (
+            {s.status === 'ACTIVE' && inRange !== null && (
               <span className={`hidden lg:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ${
                 inRange
                   ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
@@ -970,7 +990,7 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
           </div>
 
           <div className="flex items-center gap-1.5 shrink-0 ml-2" onClick={e => e.stopPropagation()}>
-            {s.status !== 'stopped' && confirmStopId !== s.id && (
+            {!isStopped(s.status) && confirmStopId !== s.id && (
               <button onClick={() => setConfirmStopId(s.id)}
                 className="inline-flex items-center gap-1.5 text-xs font-semibold text-red-500/80
                            bg-red-500/8 backdrop-blur-sm border border-red-300/40
@@ -1069,9 +1089,9 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
                       <div className="relative px-5 py-4 border-b sm:border-b-0 sm:border-r border-white/50">
                         <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-orange-400/70 to-amber-300/50" />
                         <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2.5">
-                          {s.status === 'active' ? 'Imperm. Loss' : 'Position Δ'}
+                          {s.status === 'ACTIVE' ? 'Imperm. Loss' : 'Position Δ'}
                         </p>
-                        {s.status === 'active' ? (
+                        {s.status === 'ACTIVE' ? (
                           ilResult ? (
                             <>
                               <p className={`text-xl font-bold tracking-tight ${ilResult.ilUsd >= 0 ? 'text-emerald-600' : 'text-orange-500'}`}>
@@ -1150,7 +1170,7 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
                           </div>
                         )}
                       </div>
-                      {s.status === 'active' && pool && pos && (
+                      {s.status === 'ACTIVE' && pool && pos && (
                         <>
                           <p className="text-3xl font-bold text-gray-900 tracking-tight leading-none mt-2">
                             ${Number(pool.price).toLocaleString('en-US', { maximumFractionDigits: 2 })}
@@ -1161,7 +1181,7 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
                     </div>
                     <div className="px-5 py-4"
                       style={{ backgroundImage: 'radial-gradient(circle, rgba(99,102,241,0.07) 1px, transparent 1px)', backgroundSize: '18px 18px' }}>
-                      {s.status !== 'active' ? (
+                      {s.status !== 'ACTIVE' ? (
                         <div className="space-y-2">
                           <div className="flex items-center gap-3 bg-white/70 border border-white/80 rounded-xl px-3 py-2.5">
                             <span className="text-xs font-medium text-gray-400">NFT</span>
@@ -1226,15 +1246,15 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
                             {/* Current/close position value */}
                             {totalReturn && (
                               <div className={`flex justify-between items-start px-2.5 py-1.5 rounded-lg border ${
-                                s.status === 'active'
+                                s.status === 'ACTIVE'
                                   ? 'bg-blue-50/40 border-blue-100/50'
                                   : 'bg-gray-50/40 border-gray-100/50'
                               }`}>
                                 <div>
                                   <span className="text-xs font-medium text-gray-500">
-                                    {s.status === 'active' ? 'Current position' : 'Withdrawn'}
+                                    {s.status === 'ACTIVE' ? 'Current position' : 'Withdrawn'}
                                   </span>
-                                  {s.status === 'active' && ethPrice > 0 && (
+                                  {s.status === 'ACTIVE' && ethPrice > 0 && (
                                     <p className="text-[10px] text-gray-400 mt-0.5">ETH = ${ethPrice.toFixed(0)} now</p>
                                   )}
                                 </div>
@@ -1263,7 +1283,7 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
                             </div>
 
                             {/* Unclaimed fees (active only) */}
-                            {s.status === 'active' && pos && (() => {
+                            {s.status === 'ACTIVE' && pos && (() => {
                               const uf = computeUnclaimedFees(pos, ethPrice, dec0, dec1)
                               return uf ? (
                                 <div className="flex justify-between items-start px-2.5 py-1.5 rounded-lg bg-sky-50/50 border border-sky-100/60">
@@ -1300,7 +1320,7 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
                             </div>
 
                             {/* IL row (active only) */}
-                            {s.status === 'active' && ilResult && (
+                            {s.status === 'ACTIVE' && ilResult && (
                               <div className={`flex justify-between items-start px-2.5 py-1.5 rounded-lg border ${
                                 ilResult.ilUsd >= 0
                                   ? 'bg-emerald-50/40 border-emerald-100/50'
@@ -1356,9 +1376,9 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
                             )}
 
                             {/* Stopped snapshot */}
-                            {s.status === 'stopped' && st.closeEthPriceUsd != null && (
+                            {isStopped(s.status) && s.endEthPriceUsd != null && (
                               <div className="pt-3 border-t border-gray-100/80 space-y-1">
-                                <p className="text-[11px] text-gray-400 font-medium px-2.5">At close · ETH = {formatUsd(st.closeEthPriceUsd)}</p>
+                                <p className="text-[11px] text-gray-400 font-medium px-2.5">At close · ETH = {formatUsd(s.endEthPriceUsd)}</p>
                               </div>
                             )}
                           </div>
@@ -1391,7 +1411,7 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
                         </div>
                         <div className="space-y-0.5">
                           <InfoRow label="Started" value={new Date(s.createdAt).toLocaleDateString()} />
-                          {s.status !== 'stopped'
+                          {!isStopped(s.status)
                             ? <InfoRow label="Running" value={`${days} days`} />
                             : s.stoppedAt ? <InfoRow label="Stopped" value={new Date(s.stoppedAt).toLocaleDateString()} /> : null
                           }

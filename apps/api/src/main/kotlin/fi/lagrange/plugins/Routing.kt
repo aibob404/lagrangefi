@@ -346,7 +346,7 @@ fun Application.configureRouting(
                                 txDetails = closeResult?.txDetails,
                                 txHashes = closeResult?.txHashes ?: emptyList(),
                                 txSteps = closeResult?.txSteps,
-                                totalGasWei = 0L,
+                                totalGasWei = closeResult?.gasUsedWei?.toLongOrNull() ?: 0L,
                             )
                             closeTxRecords.forEach { tx ->
                                 ChainTransactions.insert {

@@ -98,6 +98,7 @@ export interface CloseRequest {
 export interface CloseResult {
   success: boolean
   txHashes: string[]
+  txDetails?: TxDetail[]
   /** Labels for each txHash entry (1:1 mapping) */
   txSteps?: string[]
   /** Total token0 collected at close (principal + fees, raw units) */
@@ -106,6 +107,8 @@ export interface CloseResult {
   token1Amount?: string
   /** LP fees only (total collected minus principal) — for accumulating into strategy stats */
   feesCollected?: FeesCollected
+  /** Total gas cost across all close transactions, in wei */
+  gasUsedWei?: string
   error?: string
 }
 

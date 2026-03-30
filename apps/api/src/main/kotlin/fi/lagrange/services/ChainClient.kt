@@ -74,6 +74,7 @@ data class CloseResponse(
     val token0Amount: String? = null,
     val token1Amount: String? = null,
     val feesCollected: FeesCollectedResponse? = null,
+    val gasUsedWei: String? = null,
     val error: String? = null,
 )
 

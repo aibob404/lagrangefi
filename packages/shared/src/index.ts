@@ -49,6 +49,7 @@ export interface TxDetail {
 export interface RebalanceResult {
   success: boolean
   txHashes: string[]
+  txDetails?: TxDetail[]
   /** Labels for each txHash entry (1:1 mapping) */
   txSteps?: string[]
   newTokenId?: string

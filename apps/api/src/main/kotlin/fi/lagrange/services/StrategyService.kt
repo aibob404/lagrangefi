@@ -1,13 +1,15 @@
 package fi.lagrange.services
 
-import fi.lagrange.model.RebalanceEvents
+import fi.lagrange.model.ChainTransactions
+import fi.lagrange.model.RebalanceDetails
 import fi.lagrange.model.Strategies
+import fi.lagrange.model.StrategyEvents
+import fi.lagrange.model.StrategySnapshots
 import fi.lagrange.model.StrategyStats
 import kotlinx.datetime.Clock
 import kotlinx.serialization.Serializable
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.transactions.transaction
-import kotlin.time.Duration.Companion.hours
 
 @Serializable
 data class StrategyRecord(
@@ -26,11 +28,15 @@ data class StrategyRecord(
     val status: String,
     val createdAt: String,
     val stoppedAt: String?,
+    val stopReason: String?,
     val initialToken0Amount: String?,
     val initialToken1Amount: String?,
     val initialValueUsd: Double?,
     val openEthPriceUsd: Double?,
-    val openTxHashes: String?,
+    val endToken0Amount: String?,
+    val endToken1Amount: String?,
+    val endValueUsd: Double?,
+    val endEthPriceUsd: Double?,
 )
 
 @Serializable
@@ -39,21 +45,52 @@ data class StrategyStatsDto(
     val totalRebalances: Int,
     val feesCollectedToken0: String,
     val feesCollectedToken1: String,
-    val gasCostWei: String,
+    val gasCostWei: Long,
     val gasCostUsd: Double,
     val feesCollectedUsd: Double,
-    val closeEthPriceUsd: Double?,
-    val closeFeesUsd: Double?,
-    val closeGasUsd: Double?,
-    val closeToken0Amount: String?,
-    val closeToken1Amount: String?,
-    val closeValueUsd: Double?,
-    val closeTxHashes: String?,
     val totalPollTicks: Int,
     val inRangeTicks: Int,
     val timeInRangePct: Double,
     val avgRebalanceIntervalHours: Double?,
     val updatedAt: String,
+)
+
+@Serializable
+data class ChainTransactionDto(
+    val id: Int,
+    val txHash: String,
+    val action: String,
+    val gasCostWei: Long,
+    val ethToUsdPrice: Double,
+    val txTimestamp: String,
+    val createdAt: String,
+)
+
+@Serializable
+data class RebalanceDetailsDto(
+    val oldNftTokenId: String?,
+    val newNftTokenId: String?,
+    val newTickLower: Int,
+    val newTickUpper: Int,
+    val feesCollectedToken0: String,
+    val feesCollectedToken1: String,
+    val positionToken0Start: String,
+    val positionToken1Start: String,
+    val positionToken0End: String,
+    val positionToken1End: String,
+)
+
+@Serializable
+data class StrategyEventDto(
+    val id: Int,
+    val strategyId: Int,
+    val action: String,
+    val status: String,
+    val errorMessage: String?,
+    val triggeredAt: String,
+    val completedAt: String?,
+    val rebalanceDetails: RebalanceDetailsDto?,
+    val transactions: List<ChainTransactionDto>,
 )
 
 class StrategyService {
@@ -74,16 +111,16 @@ class StrategyService {
         initialToken0Amount: String? = null,
         initialToken1Amount: String? = null,
         initialValueUsd: Double? = null,
-        initialGasWei: String? = null,
         openEthPriceUsd: Double? = null,
-        openTxHashes: String? = null,
     ): StrategyRecord = transaction {
         val activeCount = Strategies.selectAll()
-            .where { (Strategies.userId eq userId) and (Strategies.status eq "active") }
+            .where { (Strategies.userId eq userId) and (Strategies.status inList listOf("ACTIVE", "INITIATING")) }
             .count()
         require(activeCount == 0L) { "You already have an active strategy. Pause or stop it before creating a new one." }
 
         val now = Clock.System.now()
+        val initialValueBD: java.math.BigDecimal? = initialValueUsd?.let { java.math.BigDecimal(it.toString()).setScale(2, java.math.RoundingMode.HALF_UP) }
+        val openEthBD: java.math.BigDecimal? = openEthPriceUsd?.let { java.math.BigDecimal(it.toString()).setScale(8, java.math.RoundingMode.HALF_UP) }
         val id = Strategies.insert {
             it[Strategies.userId] = userId
             it[Strategies.name] = name
@@ -96,26 +133,17 @@ class StrategyService {
             it[Strategies.rangePercent] = rangePercent
             it[Strategies.slippageTolerance] = slippageTolerance
             it[Strategies.pollIntervalSeconds] = pollIntervalSeconds
-            it[status] = "active"
+            it[status] = "ACTIVE"
             it[createdAt] = now
             it[stoppedAt] = null
             it[Strategies.initialToken0Amount] = initialToken0Amount
             it[Strategies.initialToken1Amount] = initialToken1Amount
-            it[Strategies.initialValueUsd] = initialValueUsd
-            it[Strategies.openEthPriceUsd] = openEthPriceUsd
-            it[Strategies.openTxHashes] = openTxHashes
+            it[Strategies.initialValueUsd] = initialValueBD
+            it[Strategies.openEthPriceUsd] = openEthBD
         } get Strategies.id
 
-        // Create empty stats row
         StrategyStats.insert {
             it[strategyId] = id
-            it[totalRebalances] = 0
-            it[feesCollectedToken0] = "0"
-            it[feesCollectedToken1] = "0"
-            it[gasCostWei] = initialGasWei ?: "0"
-            it[totalPollTicks] = 0
-            it[inRangeTicks] = 0
-            it[timeInRangePct] = 0.0
             it[updatedAt] = now
         }
 
@@ -135,11 +163,18 @@ class StrategyService {
             .map { rowToRecord(it) }
     }
 
-    fun stop(strategyId: Int, userId: Int): Boolean = transaction {
+    fun stop(strategyId: Int, userId: Int, stopReason: String? = null, isError: Boolean = false): Boolean = transaction {
         val now = Clock.System.now()
-        Strategies.update({ (Strategies.id eq strategyId) and (Strategies.userId eq userId) and (Strategies.status neq "stopped") }) {
-            it[status] = "stopped"
+        val newStatus = if (isError) "STOPPED_ON_ERROR" else "STOPPED_MANUALLY"
+        Strategies.update({
+            (Strategies.id eq strategyId) and
+            (Strategies.userId eq userId) and
+            (Strategies.status neq "STOPPED_MANUALLY") and
+            (Strategies.status neq "STOPPED_ON_ERROR")
+        }) {
+            it[status] = newStatus
             it[stoppedAt] = now
+            it[Strategies.stopReason] = stopReason
         } > 0
     }
 
@@ -168,76 +203,120 @@ class StrategyService {
         }
     }
 
-    /** Accumulate rebalance outcome into stats */
-    fun recordRebalanceSuccess(
+    /**
+     * Record a completed rebalance event: updates StrategyEvents to success, inserts RebalanceDetails,
+     * inserts ChainTransactions, and accumulates StrategyStats — all in one transaction.
+     * Must only be called when the rebalance has fully succeeded.
+     */
+    fun recordRebalanceEvent(
         strategyId: Int,
-        feesToken0: String,
-        feesToken1: String,
-        gasWei: String,
-        ethPriceUsd: Double,
+        eventId: Int,
+        fees0: String,
+        fees1: String,
+        totalGasWei: Long,
+        ethPriceUsd: java.math.BigDecimal,
+        txRecords: List<TxRecord>,
+        oldNftTokenId: String?,
+        newNftTokenId: String?,
+        newTickLower: Int,
+        newTickUpper: Int,
+        positionToken0Start: String,
+        positionToken1Start: String,
+        positionToken0End: String,
+        positionToken1End: String,
     ) = transaction {
         val now = Clock.System.now()
-        val row = StrategyStats.selectAll().where { StrategyStats.strategyId eq strategyId }.firstOrNull()
+
+        StrategyEvents.update({ StrategyEvents.id eq eventId }) {
+            it[status] = "success"
+            it[completedAt] = now
+        }
+
+        RebalanceDetails.insert {
+            it[strategyEventId] = eventId
+            it[RebalanceDetails.strategyId] = strategyId
+            it[RebalanceDetails.oldNftTokenId] = oldNftTokenId
+            it[RebalanceDetails.newNftTokenId] = newNftTokenId
+            it[RebalanceDetails.newTickLower] = newTickLower
+            it[RebalanceDetails.newTickUpper] = newTickUpper
+            it[feesCollectedToken0] = fees0
+            it[feesCollectedToken1] = fees1
+            it[RebalanceDetails.positionToken0Start] = positionToken0Start
+            it[RebalanceDetails.positionToken1Start] = positionToken1Start
+            it[RebalanceDetails.positionToken0End] = positionToken0End
+            it[RebalanceDetails.positionToken1End] = positionToken1End
+        }
+
+        for (tx in txRecords) {
+            ChainTransactions.insert {
+                it[strategyEventId] = eventId
+                it[txHash] = tx.txHash
+                it[ChainTransactions.action] = tx.action
+                it[gasCostWei] = tx.gasUsedWei
+                it[ethToUsdPrice] = ethPriceUsd
+                it[txTimestamp] = now
+                it[createdAt] = now
+            }
+        }
+
+        val statsRow = StrategyStats.selectAll().where { StrategyStats.strategyId eq strategyId }.firstOrNull()
             ?: return@transaction
 
-        val newFees0 = (row[StrategyStats.feesCollectedToken0].toBigIntegerOrNull() ?: java.math.BigInteger.ZERO) +
-                (feesToken0.toBigIntegerOrNull() ?: java.math.BigInteger.ZERO)
-        val newFees1 = (row[StrategyStats.feesCollectedToken1].toBigIntegerOrNull() ?: java.math.BigInteger.ZERO) +
-                (feesToken1.toBigIntegerOrNull() ?: java.math.BigInteger.ZERO)
-        val newGas = (row[StrategyStats.gasCostWei].toBigIntegerOrNull() ?: java.math.BigInteger.ZERO) +
-                (gasWei.toBigIntegerOrNull() ?: java.math.BigInteger.ZERO)
-        val gasEth = (gasWei.toBigIntegerOrNull() ?: java.math.BigInteger.ZERO)
-            .toBigDecimal().divide(java.math.BigDecimal("1000000000000000000"))
-        val newGasUsd = row[StrategyStats.gasCostUsd] + gasEth.toDouble() * ethPriceUsd
+        val newFees0 = (statsRow[StrategyStats.feesCollectedToken0].toBigIntegerOrNull() ?: java.math.BigInteger.ZERO) +
+                (fees0.toBigIntegerOrNull() ?: java.math.BigInteger.ZERO)
+        val newFees1 = (statsRow[StrategyStats.feesCollectedToken1].toBigIntegerOrNull() ?: java.math.BigInteger.ZERO) +
+                (fees1.toBigIntegerOrNull() ?: java.math.BigInteger.ZERO)
+        val newGasWei = statsRow[StrategyStats.gasCostWei] + totalGasWei
 
-        // Compute fees in USD using token decimals from the strategy record
+        val gasEth = java.math.BigDecimal(totalGasWei).divide(
+            java.math.BigDecimal("1000000000000000000"), 18, java.math.RoundingMode.HALF_UP
+        )
+        val newGasUsd = statsRow[StrategyStats.gasCostUsd] +
+                gasEth.multiply(ethPriceUsd).setScale(2, java.math.RoundingMode.HALF_UP)
+
         val strategy = Strategies.selectAll().where { Strategies.id eq strategyId }.firstOrNull()
         val dec0 = strategy?.get(Strategies.token0Decimals) ?: 18
         val dec1 = strategy?.get(Strategies.token1Decimals) ?: 6
-        val fee0 = (feesToken0.toBigIntegerOrNull() ?: java.math.BigInteger.ZERO)
-            .toBigDecimal().divide(java.math.BigDecimal.TEN.pow(dec0))
-        val fee1 = (feesToken1.toBigIntegerOrNull() ?: java.math.BigInteger.ZERO)
-            .toBigDecimal().divide(java.math.BigDecimal.TEN.pow(dec1))
-        // token0 is WETH (18 dec) → multiply by ETH price; token1 is USDC (6 dec) → face value
-        val feesUsd = if (dec0 == 18) fee0.toDouble() * ethPriceUsd + fee1.toDouble()
-                      else fee1.toDouble() * ethPriceUsd + fee0.toDouble()
-        val newFeesUsd = row[StrategyStats.feesCollectedUsd] + feesUsd
+        val fee0Human = (fees0.toBigIntegerOrNull() ?: java.math.BigInteger.ZERO)
+            .toBigDecimal().divide(java.math.BigDecimal.TEN.pow(dec0), dec0, java.math.RoundingMode.HALF_UP)
+        val fee1Human = (fees1.toBigIntegerOrNull() ?: java.math.BigInteger.ZERO)
+            .toBigDecimal().divide(java.math.BigDecimal.TEN.pow(dec1), dec1, java.math.RoundingMode.HALF_UP)
+        val feesUsdNew = if (dec0 == 18)
+            fee0Human.multiply(ethPriceUsd).add(fee1Human).setScale(2, java.math.RoundingMode.HALF_UP)
+        else
+            fee1Human.multiply(ethPriceUsd).add(fee0Human).setScale(2, java.math.RoundingMode.HALF_UP)
+        val newFeesUsd = statsRow[StrategyStats.feesCollectedUsd] + feesUsdNew
 
         StrategyStats.update({ StrategyStats.strategyId eq strategyId }) {
-            it[totalRebalances] = row[StrategyStats.totalRebalances] + 1
+            it[totalRebalances] = statsRow[StrategyStats.totalRebalances] + 1
             it[feesCollectedToken0] = newFees0.toString()
             it[feesCollectedToken1] = newFees1.toString()
-            it[gasCostWei] = newGas.toString()
+            it[gasCostWei] = newGasWei
             it[gasCostUsd] = newGasUsd
             it[feesCollectedUsd] = newFeesUsd
             it[updatedAt] = now
         }
     }
 
-    /** Snapshot fees, gas, ETH price, and withdrawn amounts at the moment a strategy is stopped */
+    /** Snapshot end position amounts and ETH price onto Strategies when strategy is stopped */
     fun recordClose(
         strategyId: Int,
-        closeEthPriceUsd: Double,
-        closeToken0Amount: String? = null,
-        closeToken1Amount: String? = null,
-        closeValueUsd: Double? = null,
-        closeTxHashes: String? = null,
+        endToken0Amount: String? = null,
+        endToken1Amount: String? = null,
+        endValueUsd: Double? = null,
+        endEthPriceUsd: Double? = null,
     ) = transaction {
-        val stats = StrategyStats.selectAll().where { StrategyStats.strategyId eq strategyId }.firstOrNull()
-            ?: return@transaction
-        StrategyStats.update({ StrategyStats.strategyId eq strategyId }) {
-            it[StrategyStats.closeEthPriceUsd] = closeEthPriceUsd
-            it[StrategyStats.closeFeesUsd] = stats[StrategyStats.feesCollectedUsd]
-            it[StrategyStats.closeGasUsd] = stats[StrategyStats.gasCostUsd]
-            it[StrategyStats.closeToken0Amount] = closeToken0Amount
-            it[StrategyStats.closeToken1Amount] = closeToken1Amount
-            it[StrategyStats.closeValueUsd] = closeValueUsd
-            it[StrategyStats.closeTxHashes] = closeTxHashes
+        val endValueBD: java.math.BigDecimal? = endValueUsd?.let { java.math.BigDecimal(it.toString()).setScale(2, java.math.RoundingMode.HALF_UP) }
+        val endEthBD: java.math.BigDecimal? = endEthPriceUsd?.let { java.math.BigDecimal(it.toString()).setScale(8, java.math.RoundingMode.HALF_UP) }
+        Strategies.update({ Strategies.id eq strategyId }) {
+            it[Strategies.endToken0Amount] = endToken0Amount
+            it[Strategies.endToken1Amount] = endToken1Amount
+            it[Strategies.endValueUsd] = endValueBD
+            it[Strategies.endEthPriceUsd] = endEthBD
         }
     }
 
     fun getStats(strategyId: Int, userId: Int): StrategyStatsDto? = transaction {
-        // Verify ownership
         Strategies.selectAll()
             .where { (Strategies.id eq strategyId) and (Strategies.userId eq userId) }
             .firstOrNull() ?: return@transaction null
@@ -260,15 +339,8 @@ class StrategyService {
             feesCollectedToken0 = stats[StrategyStats.feesCollectedToken0],
             feesCollectedToken1 = stats[StrategyStats.feesCollectedToken1],
             gasCostWei = stats[StrategyStats.gasCostWei],
-            gasCostUsd = stats[StrategyStats.gasCostUsd],
-            feesCollectedUsd = stats[StrategyStats.feesCollectedUsd],
-            closeEthPriceUsd = stats[StrategyStats.closeEthPriceUsd],
-            closeFeesUsd = stats[StrategyStats.closeFeesUsd],
-            closeGasUsd = stats[StrategyStats.closeGasUsd],
-            closeToken0Amount = stats[StrategyStats.closeToken0Amount],
-            closeToken1Amount = stats[StrategyStats.closeToken1Amount],
-            closeValueUsd = stats[StrategyStats.closeValueUsd],
-            closeTxHashes = stats[StrategyStats.closeTxHashes],
+            gasCostUsd = stats[StrategyStats.gasCostUsd].toDouble(),
+            feesCollectedUsd = stats[StrategyStats.feesCollectedUsd].toDouble(),
             totalPollTicks = stats[StrategyStats.totalPollTicks],
             inRangeTicks = stats[StrategyStats.inRangeTicks],
             timeInRangePct = stats[StrategyStats.timeInRangePct],
@@ -277,40 +349,81 @@ class StrategyService {
         )
     }
 
-    fun getRebalanceHistory(strategyId: Int, userId: Int, limit: Int = 50): List<RebalanceEventDtoKt>? = transaction {
-        // Verify ownership
+    fun getEventHistory(strategyId: Int, userId: Int, limit: Int = 50): List<StrategyEventDto>? = transaction {
         Strategies.selectAll()
             .where { (Strategies.id eq strategyId) and (Strategies.userId eq userId) }
             .firstOrNull() ?: return@transaction null
 
-        RebalanceEvents.selectAll()
-            .where { RebalanceEvents.strategyId eq strategyId }
-            .orderBy(RebalanceEvents.triggeredAt, SortOrder.DESC)
+        val events = StrategyEvents.selectAll()
+            .where { StrategyEvents.strategyId eq strategyId }
+            .orderBy(StrategyEvents.triggeredAt, SortOrder.DESC)
             .limit(limit)
-            .map { row ->
-                RebalanceEventDtoKt(
-                    id = row[RebalanceEvents.id],
-                    strategyId = row[RebalanceEvents.strategyId],
-                    tokenId = row[RebalanceEvents.tokenId],
-                    status = row[RebalanceEvents.status],
-                    newTickLower = row[RebalanceEvents.newTickLower],
-                    newTickUpper = row[RebalanceEvents.newTickUpper],
-                    newTokenId = row[RebalanceEvents.newTokenId],
-                    txHashes = row[RebalanceEvents.txHashes],
-                    txSteps = row[RebalanceEvents.txSteps],
-                    feesCollectedToken0 = row[RebalanceEvents.feesCollectedToken0],
-                    feesCollectedToken1 = row[RebalanceEvents.feesCollectedToken1],
-                    gasCostWei = row[RebalanceEvents.gasCostWei],
-                    positionToken0Start = row[RebalanceEvents.positionToken0Start],
-                    positionToken1Start = row[RebalanceEvents.positionToken1Start],
-                    positionToken0End = row[RebalanceEvents.positionToken0End],
-                    positionToken1End = row[RebalanceEvents.positionToken1End],
-                    ethPriceUsd = row[RebalanceEvents.ethPriceUsd],
-                    errorMessage = row[RebalanceEvents.errorMessage],
-                    triggeredAt = row[RebalanceEvents.triggeredAt].toString(),
-                    completedAt = row[RebalanceEvents.completedAt]?.toString(),
-                )
-            }
+            .toList()
+
+        events.map { eventRow ->
+            val eventId = eventRow[StrategyEvents.id]
+
+            val details = RebalanceDetails.selectAll()
+                .where { RebalanceDetails.strategyEventId eq eventId }
+                .firstOrNull()?.let { d ->
+                    RebalanceDetailsDto(
+                        oldNftTokenId = d[RebalanceDetails.oldNftTokenId],
+                        newNftTokenId = d[RebalanceDetails.newNftTokenId],
+                        newTickLower = d[RebalanceDetails.newTickLower],
+                        newTickUpper = d[RebalanceDetails.newTickUpper],
+                        feesCollectedToken0 = d[RebalanceDetails.feesCollectedToken0],
+                        feesCollectedToken1 = d[RebalanceDetails.feesCollectedToken1],
+                        positionToken0Start = d[RebalanceDetails.positionToken0Start],
+                        positionToken1Start = d[RebalanceDetails.positionToken1Start],
+                        positionToken0End = d[RebalanceDetails.positionToken0End],
+                        positionToken1End = d[RebalanceDetails.positionToken1End],
+                    )
+                }
+
+            val txs = ChainTransactions.selectAll()
+                .where { ChainTransactions.strategyEventId eq eventId }
+                .orderBy(ChainTransactions.txTimestamp, SortOrder.ASC)
+                .map { tx ->
+                    ChainTransactionDto(
+                        id = tx[ChainTransactions.id],
+                        txHash = tx[ChainTransactions.txHash],
+                        action = tx[ChainTransactions.action],
+                        gasCostWei = tx[ChainTransactions.gasCostWei],
+                        ethToUsdPrice = tx[ChainTransactions.ethToUsdPrice].toDouble(),
+                        txTimestamp = tx[ChainTransactions.txTimestamp].toString(),
+                        createdAt = tx[ChainTransactions.createdAt].toString(),
+                    )
+                }
+
+            StrategyEventDto(
+                id = eventId,
+                strategyId = eventRow[StrategyEvents.strategyId],
+                action = eventRow[StrategyEvents.action],
+                status = eventRow[StrategyEvents.status],
+                errorMessage = eventRow[StrategyEvents.errorMessage],
+                triggeredAt = eventRow[StrategyEvents.triggeredAt].toString(),
+                completedAt = eventRow[StrategyEvents.completedAt]?.toString(),
+                rebalanceDetails = details,
+                transactions = txs,
+            )
+        }
+    }
+
+    fun recordStrategySnapshot(
+        strategyId: Int,
+        token0Amount: String,
+        token1Amount: String,
+        valueUsd: java.math.BigDecimal,
+        ethPriceUsd: java.math.BigDecimal,
+    ) = transaction {
+        StrategySnapshots.insert {
+            it[StrategySnapshots.strategyId] = strategyId
+            it[StrategySnapshots.token0Amount] = token0Amount
+            it[StrategySnapshots.token1Amount] = token1Amount
+            it[StrategySnapshots.valueUsd] = valueUsd
+            it[StrategySnapshots.ethPriceUsd] = ethPriceUsd
+            it[snapshotAt] = Clock.System.now()
+        }
     }
 
     private fun rowToRecord(row: ResultRow) = StrategyRecord(
@@ -329,34 +442,14 @@ class StrategyService {
         status = row[Strategies.status],
         createdAt = row[Strategies.createdAt].toString(),
         stoppedAt = row[Strategies.stoppedAt]?.toString(),
+        stopReason = row[Strategies.stopReason],
         initialToken0Amount = row[Strategies.initialToken0Amount],
         initialToken1Amount = row[Strategies.initialToken1Amount],
-        initialValueUsd = row[Strategies.initialValueUsd],
-        openEthPriceUsd = row[Strategies.openEthPriceUsd],
-        openTxHashes = row[Strategies.openTxHashes],
+        initialValueUsd = row[Strategies.initialValueUsd]?.toDouble(),
+        openEthPriceUsd = row[Strategies.openEthPriceUsd]?.toDouble(),
+        endToken0Amount = row[Strategies.endToken0Amount],
+        endToken1Amount = row[Strategies.endToken1Amount],
+        endValueUsd = row[Strategies.endValueUsd]?.toDouble(),
+        endEthPriceUsd = row[Strategies.endEthPriceUsd]?.toDouble(),
     )
 }
-
-@Serializable
-data class RebalanceEventDtoKt(
-    val id: Int,
-    val strategyId: Int,
-    val tokenId: String,
-    val status: String,
-    val newTickLower: Int?,
-    val newTickUpper: Int?,
-    val newTokenId: String?,
-    val txHashes: String?,
-    val txSteps: String?,
-    val feesCollectedToken0: String?,
-    val feesCollectedToken1: String?,
-    val gasCostWei: String?,
-    val positionToken0Start: String?,
-    val positionToken1Start: String?,
-    val positionToken0End: String?,
-    val positionToken1End: String?,
-    val ethPriceUsd: String?,
-    val errorMessage: String?,
-    val triggeredAt: String,
-    val completedAt: String?,
-)

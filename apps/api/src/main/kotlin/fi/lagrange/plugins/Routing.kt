@@ -2,21 +2,25 @@ package fi.lagrange.plugins
 
 import fi.lagrange.auth.authRoutes
 import fi.lagrange.auth.getUserId
+import fi.lagrange.model.ChainTransactions
+import fi.lagrange.model.StrategyEvents
 import fi.lagrange.services.ChainClient
 import fi.lagrange.services.StrategyService
 import fi.lagrange.services.TelegramNotifier
 import fi.lagrange.services.UserService
 import fi.lagrange.services.WalletService
 import fi.lagrange.strategy.StrategyScheduler
+import fi.lagrange.strategy.buildTxRecords
 import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.auth.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
+import kotlinx.datetime.Clock
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
+import org.jetbrains.exposed.sql.insert
+import org.jetbrains.exposed.sql.transactions.transaction
 
 @Serializable
 data class CreateStrategyRequestDto(
@@ -42,6 +46,11 @@ data class StartStrategyRequestDto(
 data class StartStrategyResponseDto(
     val tokenId: String,
     val txHashes: List<String>,
+)
+
+@Serializable
+data class StopStrategyRequestDto(
+    val reason: String? = null,
 )
 
 private val WETH = "0x82af49447d8a07e3bd95bd0d56f35241523fbab1"
@@ -81,7 +90,7 @@ fun Application.configureRouting(
                 get("/position") {
                     val userId = call.getUserId()
                     val strategy = strategyService.listForUser(userId)
-                        .firstOrNull { it.status == "active" }
+                        .firstOrNull { it.status == "ACTIVE" }
                         ?: return@get call.respond(HttpStatusCode.NotFound, mapOf("error" to "No active strategy"))
                     try {
                         val position = chainClient.getPosition(strategy.currentTokenId)
@@ -94,7 +103,7 @@ fun Application.configureRouting(
                 get("/pool-state") {
                     val userId = call.getUserId()
                     val strategy = strategyService.listForUser(userId)
-                        .firstOrNull { it.status == "active" }
+                        .firstOrNull { it.status == "ACTIVE" }
                         ?: return@get call.respond(HttpStatusCode.NotFound, mapOf("error" to "No active strategy"))
                     try {
                         val poolState = chainClient.getPoolState(strategy.currentTokenId)
@@ -183,10 +192,36 @@ fun Application.configureRouting(
                             initialToken0Amount = initialToken0,
                             initialToken1Amount = initialToken1,
                             initialValueUsd = initialValueUsd,
-                            initialGasWei = mintResult.gasUsedWei,
                             openEthPriceUsd = ethPrice,
-                            openTxHashes = Json.encodeToString(mintResult.txHashes),
                         )
+
+                        // Record START_STRATEGY event and mint ChainTransactions
+                        val mintEthPrice = java.math.BigDecimal(ethPrice.toString()).setScale(8, java.math.RoundingMode.HALF_UP)
+                        val mintGasLong = mintResult.gasUsedWei?.toLongOrNull() ?: 0L
+                        val startIdempotencyKey = "start-${strategy.id}-${mintResult.tokenId}"
+                        transaction {
+                            val startEventId = StrategyEvents.insert {
+                                it[strategyId] = strategy.id
+                                it[action] = "START_STRATEGY"
+                                it[idempotencyKey] = startIdempotencyKey
+                                it[status] = "success"
+                                it[triggeredAt] = Clock.System.now()
+                                it[completedAt] = Clock.System.now()
+                            }[StrategyEvents.id]
+
+                            mintResult.txHashes.forEach { hash ->
+                                ChainTransactions.insert {
+                                    it[strategyEventId] = startEventId
+                                    it[txHash] = hash
+                                    it[ChainTransactions.action] = "MINT"
+                                    it[gasCostWei] = mintGasLong
+                                    it[ethToUsdPrice] = mintEthPrice
+                                    it[txTimestamp] = Clock.System.now()
+                                    it[createdAt] = Clock.System.now()
+                                }
+                            }
+                        }
+
                         scheduler.start(strategy)
                         telegram.sendAlert("Strategy <b>${strategy.name}</b> started! Position #${mintResult.tokenId} minted.")
                         call.respond(HttpStatusCode.Created, StartStrategyResponseDto(
@@ -254,7 +289,8 @@ fun Application.configureRouting(
                         ?: return@delete call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid strategy id"))
                     val strategy = strategyService.findById(strategyId, userId)
                         ?: return@delete call.respond(HttpStatusCode.NotFound, mapOf("error" to "Strategy not found"))
-                    val ok = strategyService.stop(strategyId, userId)
+                    val body = runCatching { call.receive<StopStrategyRequestDto>() }.getOrNull()
+                    val ok = strategyService.stop(strategyId, userId, stopReason = body?.reason, isError = false)
                     if (!ok) return@delete call.respond(HttpStatusCode.NotFound, mapOf("error" to "Strategy not found"))
                     scheduler.stop(strategyId)
                     // Close LP position on-chain and unwrap WETH → ETH
@@ -262,11 +298,11 @@ fun Application.configureRouting(
                     try {
                         val walletPhrase = walletService.getDecryptedPhrase(userId)
                         if (walletPhrase != null) {
-                            val idempotencyKey = "stop-$strategyId-${System.currentTimeMillis()}"
+                            val idempotencyKey = "close-$strategyId-${System.currentTimeMillis()}"
                             closeResult = chainClient.close(idempotencyKey, strategy.currentTokenId, walletPhrase)
                         }
                     } catch (_: Exception) { /* non-fatal: DB is already updated */ }
-                    // Snapshot fees/gas, ETH price, and withdrawn amounts when strategy is stopped
+                    // Snapshot ETH price and withdrawn amounts onto Strategies when stopped
                     try {
                         val poolState = chainClient.getPoolByPair(WETH, USDC, strategy.fee)
                         val closeEthPrice = poolState.price.toDoubleOrNull() ?: 0.0
@@ -274,21 +310,51 @@ fun Application.configureRouting(
                         val token1Amt = closeResult?.token1Amount
                         val closeValueUsd = if (token0Amt != null && token1Amt != null) {
                             val t0 = token0Amt.toBigIntegerOrNull()?.toBigDecimal()
-                                ?.divide(java.math.BigDecimal.TEN.pow(strategy.token0Decimals))?.toDouble() ?: 0.0
+                                ?.divide(java.math.BigDecimal.TEN.pow(strategy.token0Decimals), strategy.token0Decimals, java.math.RoundingMode.HALF_UP)?.toDouble() ?: 0.0
                             val t1 = token1Amt.toBigIntegerOrNull()?.toBigDecimal()
-                                ?.divide(java.math.BigDecimal.TEN.pow(strategy.token1Decimals))?.toDouble() ?: 0.0
+                                ?.divide(java.math.BigDecimal.TEN.pow(strategy.token1Decimals), strategy.token1Decimals, java.math.RoundingMode.HALF_UP)?.toDouble() ?: 0.0
                             if (strategy.token0Decimals == 18) t0 * closeEthPrice + t1
                             else t1 * closeEthPrice + t0
                         } else null
-                        val closeTxHashes = closeResult?.txHashes?.let { Json.encodeToString(it) }
                         strategyService.recordClose(
                             strategyId = strategyId,
-                            closeEthPriceUsd = closeEthPrice,
-                            closeToken0Amount = token0Amt,
-                            closeToken1Amount = token1Amt,
-                            closeValueUsd = closeValueUsd,
-                            closeTxHashes = closeTxHashes,
+                            endToken0Amount = token0Amt,
+                            endToken1Amount = token1Amt,
+                            endValueUsd = closeValueUsd,
+                            endEthPriceUsd = closeEthPrice,
                         )
+
+                        // Record CLOSE_STRATEGY event and ChainTransactions
+                        val closeEthPriceBD = java.math.BigDecimal(closeEthPrice.toString()).setScale(8, java.math.RoundingMode.HALF_UP)
+                        val closeIdempotencyKey = "close-event-$strategyId-${System.currentTimeMillis()}"
+                        transaction {
+                            val closeEventId = StrategyEvents.insert {
+                                it[StrategyEvents.strategyId] = strategyId
+                                it[action] = "CLOSE_STRATEGY"
+                                it[idempotencyKey] = closeIdempotencyKey
+                                it[status] = if (closeResult?.success == true) "success" else "failed"
+                                it[triggeredAt] = Clock.System.now()
+                                it[completedAt] = Clock.System.now()
+                            }[StrategyEvents.id]
+
+                            val closeTxRecords = buildTxRecords(
+                                txDetails = closeResult?.txDetails,
+                                txHashes = closeResult?.txHashes ?: emptyList(),
+                                txSteps = closeResult?.txSteps,
+                                totalGasWei = 0L,
+                            )
+                            closeTxRecords.forEach { tx ->
+                                ChainTransactions.insert {
+                                    it[strategyEventId] = closeEventId
+                                    it[txHash] = tx.txHash
+                                    it[ChainTransactions.action] = tx.action
+                                    it[gasCostWei] = tx.gasUsedWei
+                                    it[ethToUsdPrice] = closeEthPriceBD
+                                    it[txTimestamp] = Clock.System.now()
+                                    it[createdAt] = Clock.System.now()
+                                }
+                            }
+                        }
                     } catch (_: Exception) { /* non-fatal */ }
                     telegram.sendAlert("Strategy <b>${strategy.name}</b> stopped.")
                     call.respond(mapOf("status" to "stopped"))
@@ -309,17 +375,17 @@ fun Application.configureRouting(
                     val userId = call.getUserId()
                     val strategyId = call.parameters["id"]?.toIntOrNull()
                         ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid strategy id"))
-                    val events = strategyService.getRebalanceHistory(strategyId, userId)
+                    val events = strategyService.getEventHistory(strategyId, userId)
                         ?: return@get call.respond(HttpStatusCode.NotFound, mapOf("error" to "Strategy not found"))
                     call.respond(events)
                 }
 
-                // Legacy: rebalances for the user's active strategy
+                // Legacy: events for the user's latest strategy
                 get("/rebalances") {
                     val userId = call.getUserId()
                     val strategy = strategyService.listForUser(userId).firstOrNull()
                         ?: return@get call.respond(emptyList<Unit>())
-                    val events = strategyService.getRebalanceHistory(strategy.id, userId) ?: emptyList()
+                    val events = strategyService.getEventHistory(strategy.id, userId) ?: emptyList()
                     call.respond(events)
                 }
             }

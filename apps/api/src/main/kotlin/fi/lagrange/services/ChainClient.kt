@@ -42,10 +42,18 @@ data class FeesCollectedResponse(
 )
 
 @Serializable
+data class TxRecord(
+    val txHash: String,
+    val action: String,
+    val gasUsedWei: Long = 0L,
+)
+
+@Serializable
 data class RebalanceResponse(
     val success: Boolean,
     val txHashes: List<String>,
     val txSteps: List<String>? = null,
+    val txDetails: List<TxRecord>? = null,
     val newTokenId: String? = null,
     val error: String? = null,
     val feesCollected: FeesCollectedResponse? = null,
@@ -62,6 +70,7 @@ data class CloseResponse(
     val success: Boolean,
     val txHashes: List<String>,
     val txSteps: List<String>? = null,
+    val txDetails: List<TxRecord>? = null,
     val token0Amount: String? = null,
     val token1Amount: String? = null,
     val error: String? = null,

@@ -1,13 +1,12 @@
 package fi.lagrange.strategy
 
-import fi.lagrange.model.RebalanceEvents
+import fi.lagrange.model.StrategyEvents
 import fi.lagrange.services.ChainClient
 import fi.lagrange.services.StrategyRecord
 import fi.lagrange.services.StrategyService
 import fi.lagrange.services.TelegramNotifier
+import fi.lagrange.services.TxRecord
 import kotlinx.datetime.Clock
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
 import org.jetbrains.exposed.sql.insert
 import org.jetbrains.exposed.sql.transactions.transaction
 import org.jetbrains.exposed.sql.update
@@ -40,7 +39,6 @@ class UniswapStrategy(
         val currentTick = poolState.tick
         val inRange = currentTick >= position.tickLower && currentTick < position.tickUpper
 
-        // Record tick for time-in-range tracking
         strategyService.recordPollTick(strategy.id, inRange)
 
         if (inRange) {
@@ -53,18 +51,16 @@ class UniswapStrategy(
 
         val (newTickLower, newTickUpper) = calculateNewRange(currentTick, position.fee, strategy.rangePercent)
         val idempotencyKey = UUID.randomUUID().toString()
+        val ethPrice = java.math.BigDecimal(poolState.price).setScale(8, java.math.RoundingMode.HALF_UP)
 
-        // Insert pending event
         val eventId = transaction {
-            RebalanceEvents.insert {
+            StrategyEvents.insert {
                 it[strategyId] = strategy.id
-                it[RebalanceEvents.tokenId] = tokenId
-                it[RebalanceEvents.idempotencyKey] = idempotencyKey
+                it[action] = "REBALANCE"
+                it[StrategyEvents.idempotencyKey] = idempotencyKey
                 it[status] = "pending"
-                it[RebalanceEvents.newTickLower] = newTickLower
-                it[RebalanceEvents.newTickUpper] = newTickUpper
                 it[triggeredAt] = Clock.System.now()
-            } get RebalanceEvents.id
+            }[StrategyEvents.id]
         }
 
         try {
@@ -78,48 +74,60 @@ class UniswapStrategy(
             )
 
             if (result.success) {
-                val recoveryNote = if (result.isRecovery == true) " (recovery — fees from prior partial rebalance may be untracked)" else ""
+                val recoveryNote = if (result.isRecovery == true) " (recovery)" else ""
                 log.info("Strategy=${strategy.id} rebalance succeeded${recoveryNote}. newTokenId=${result.newTokenId}")
                 telegram.sendAlert("[${strategy.name}] Rebalance successful${recoveryNote}! New tokenId=${result.newTokenId}")
 
                 val fees0 = result.feesCollected?.amount0 ?: "0"
                 val fees1 = result.feesCollected?.amount1 ?: "0"
-                val gasWei = result.gasUsedWei ?: "0"
+                val totalGasWei = result.gasUsedWei?.toLongOrNull() ?: 0L
 
-                transaction {
-                    RebalanceEvents.update({ RebalanceEvents.id eq eventId }) {
-                        it[status] = "success"
-                        it[newTokenId] = result.newTokenId
-                        it[txHashes] = Json.encodeToString(result.txHashes)
-                        it[RebalanceEvents.txSteps] = result.txSteps?.let { steps -> Json.encodeToString(steps) }
-                        it[feesCollectedToken0] = fees0
-                        it[feesCollectedToken1] = fees1
-                        it[gasCostWei] = gasWei
-                        it[positionToken0Start] = result.positionToken0Start
-                        it[positionToken1Start] = result.positionToken1Start
-                        it[positionToken0End] = result.positionToken0End
-                        it[positionToken1End] = result.positionToken1End
-                        it[ethPriceUsd] = poolState.price
-                        it[completedAt] = Clock.System.now()
-                        if (result.isRecovery == true) {
-                            it[errorMessage] = "recovery: position was empty on entry; fees from prior partial rebalance are untracked"
-                        }
-                    }
-                }
+                val txRecords = buildTxRecords(result.txDetails, result.txHashes, result.txSteps, totalGasWei)
+
+                strategyService.recordRebalanceEvent(
+                    strategyId = strategy.id,
+                    eventId = eventId,
+                    fees0 = fees0,
+                    fees1 = fees1,
+                    totalGasWei = totalGasWei,
+                    ethPriceUsd = ethPrice,
+                    txRecords = txRecords,
+                    oldNftTokenId = tokenId,
+                    newNftTokenId = result.newTokenId,
+                    newTickLower = newTickLower,
+                    newTickUpper = newTickUpper,
+                    positionToken0Start = result.positionToken0Start ?: "0",
+                    positionToken1Start = result.positionToken1Start ?: "0",
+                    positionToken0End = result.positionToken0End ?: "0",
+                    positionToken1End = result.positionToken1End ?: "0",
+                )
 
                 result.newTokenId?.let { newId ->
                     strategyService.updateTokenId(strategy.id, newId)
                 }
-                strategyService.recordRebalanceSuccess(strategy.id, fees0, fees1, gasWei, poolState.price.toDoubleOrNull() ?: 0.0)
+
+                // Snapshot position after successful rebalance
+                val t0End = result.positionToken0End ?: "0"
+                val t1End = result.positionToken1End ?: "0"
+                val dec0 = strategy.token0Decimals
+                val dec1 = strategy.token1Decimals
+                val t0Human = (t0End.toBigIntegerOrNull() ?: java.math.BigInteger.ZERO)
+                    .toBigDecimal().divide(java.math.BigDecimal.TEN.pow(dec0), dec0, java.math.RoundingMode.HALF_UP)
+                val t1Human = (t1End.toBigIntegerOrNull() ?: java.math.BigInteger.ZERO)
+                    .toBigDecimal().divide(java.math.BigDecimal.TEN.pow(dec1), dec1, java.math.RoundingMode.HALF_UP)
+                val snapValueUsd = if (dec0 == 18)
+                    t0Human.multiply(ethPrice).add(t1Human).setScale(2, java.math.RoundingMode.HALF_UP)
+                else
+                    t1Human.multiply(ethPrice).add(t0Human).setScale(2, java.math.RoundingMode.HALF_UP)
+                strategyService.recordStrategySnapshot(strategy.id, t0End, t1End, snapValueUsd, ethPrice)
+
             } else {
                 log.error("Strategy=${strategy.id} rebalance failed: ${result.error}")
                 telegram.sendAlert("[${strategy.name}] Rebalance FAILED: ${result.error}")
-
                 transaction {
-                    RebalanceEvents.update({ RebalanceEvents.id eq eventId }) {
+                    StrategyEvents.update({ StrategyEvents.id eq eventId }) {
                         it[status] = "failed"
                         it[errorMessage] = result.error
-                        it[txHashes] = result.txHashes.takeIf { it.isNotEmpty() }?.let { Json.encodeToString(it) }
                         it[completedAt] = Clock.System.now()
                     }
                 }
@@ -127,9 +135,8 @@ class UniswapStrategy(
         } catch (e: Exception) {
             log.error("Strategy=${strategy.id} rebalance threw an exception", e)
             telegram.sendAlert("[${strategy.name}] Rebalance ERROR: ${e.message}")
-
             transaction {
-                RebalanceEvents.update({ RebalanceEvents.id eq eventId }) {
+                StrategyEvents.update({ StrategyEvents.id eq eventId }) {
                     it[status] = "failed"
                     it[errorMessage] = e.message
                     it[completedAt] = Clock.System.now()
@@ -139,7 +146,6 @@ class UniswapStrategy(
         }
     }
 
-    // Calculate new tick range centered on current price ± rangePercent
     private fun calculateNewRange(currentTick: Int, fee: Int, rangePercent: Double): Pair<Int, Int> {
         val tickSpacing = feeToTickSpacing(fee)
         val tickDelta = (Math.log(1.0 + rangePercent) / Math.log(1.0001)).toInt()
@@ -157,4 +163,36 @@ class UniswapStrategy(
         10000 -> 200
         else -> 60
     }
+}
+
+/**
+ * Build TxRecord list from chain response.
+ * Prefers txDetails if chain service provides them; falls back to parallel txHashes + txSteps arrays.
+ * When falling back, total gas is attributed to the last tx; all others get 0.
+ */
+internal fun buildTxRecords(
+    txDetails: List<TxRecord>?,
+    txHashes: List<String>,
+    txSteps: List<String>?,
+    totalGasWei: Long,
+): List<TxRecord> {
+    if (txDetails != null) return txDetails
+    val steps = txSteps ?: txHashes.map { "UNKNOWN" }
+    return txHashes.zip(steps).mapIndexed { idx, (hash, step) ->
+        TxRecord(
+            txHash = hash,
+            action = stepToAction(step),
+            gasUsedWei = if (idx == txHashes.lastIndex) totalGasWei else 0L,
+        )
+    }
+}
+
+private fun stepToAction(step: String): String = when (step.lowercase()) {
+    "collect_fees", "collectfees" -> "COLLECT_FEES"
+    "burn" -> "BURN"
+    "approve" -> "APPROVE"
+    "swap" -> "SWAP"
+    "mint" -> "MINT"
+    "withdraw", "withdraw_to_wallet" -> "WITHDRAW_TO_WALLET"
+    else -> "UNKNOWN"
 }

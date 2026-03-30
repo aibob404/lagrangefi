@@ -44,6 +44,13 @@ const POSITION_MANAGER_ABI = [
     ],
   },
   {
+    name: 'burn',
+    type: 'function',
+    stateMutability: 'payable',
+    inputs: [{ name: 'tokenId', type: 'uint256' }],
+    outputs: [],
+  },
+  {
     name: 'mint',
     type: 'function',
     stateMutability: 'payable',
@@ -242,6 +249,18 @@ export async function rebalance(req: RebalanceRequest): Promise<RebalanceResult>
           amount1: (totalCollected.amount1 > principal1 ? totalCollected.amount1 - principal1 : 0n).toString(),
         }
       : undefined
+
+    // Burn the old NFT now that liquidity and tokens are fully withdrawn
+    const burnTx = await walletClient.writeContract({
+      address: POSITION_MANAGER,
+      abi: POSITION_MANAGER_ABI,
+      functionName: 'burn',
+      args: [tokenId],
+    })
+    const burnReceipt = await publicClient.waitForTransactionReceipt({ hash: burnTx })
+    txHashes.push(burnTx)
+    txSteps.push('Burn NFT')
+    receipts.push(burnReceipt)
   }
 
   // 4. Extract position token addresses and fee

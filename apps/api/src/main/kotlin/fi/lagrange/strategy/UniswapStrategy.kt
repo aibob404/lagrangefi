@@ -7,7 +7,9 @@ import fi.lagrange.services.StrategyService
 import fi.lagrange.services.TelegramNotifier
 import fi.lagrange.services.TxRecord
 import kotlinx.datetime.Clock
+import org.jetbrains.exposed.sql.and
 import org.jetbrains.exposed.sql.insert
+import org.jetbrains.exposed.sql.selectAll
 import org.jetbrains.exposed.sql.transactions.transaction
 import org.jetbrains.exposed.sql.update
 import org.slf4j.LoggerFactory
@@ -47,6 +49,17 @@ class UniswapStrategy(
         }
 
         log.info("Strategy=${strategy.id} OUT OF RANGE — tick=$currentTick range=[${position.tickLower},${position.tickUpper}]. Rebalancing.")
+
+        val hasPending = transaction {
+            StrategyEvents.selectAll()
+                .where { (StrategyEvents.strategyId eq strategy.id) and (StrategyEvents.status eq "pending") }
+                .any()
+        }
+        if (hasPending) {
+            log.warn("Strategy=${strategy.id} already has a pending rebalance event — skipping tick to avoid duplicate execution")
+            return
+        }
+
         telegram.sendAlert("[${strategy.name}] Out of range! tick=$currentTick range=[${position.tickLower},${position.tickUpper}]. Rebalancing...")
 
         val (newTickLower, newTickUpper) = calculateNewRange(currentTick, position.fee, strategy.rangePercent)

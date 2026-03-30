@@ -225,6 +225,18 @@ fun Application.configureRouting(
                                     it[createdAt] = Clock.System.now()
                                 }
                             }
+
+                            val mintStatsRow = StrategyStats.selectAll().where { StrategyStats.strategyId eq strategy.id }.firstOrNull()
+                            if (mintStatsRow != null) {
+                                val mintGasEth = java.math.BigDecimal(mintGasLong).divide(
+                                    java.math.BigDecimal("1000000000000000000"), 18, java.math.RoundingMode.HALF_UP
+                                )
+                                StrategyStats.update({ StrategyStats.strategyId eq strategy.id }) {
+                                    it[StrategyStats.gasCostWei] = mintStatsRow[StrategyStats.gasCostWei] + mintGasLong
+                                    it[StrategyStats.gasCostUsd] = mintStatsRow[StrategyStats.gasCostUsd] + mintGasEth.multiply(mintEthPrice).setScale(2, java.math.RoundingMode.HALF_UP)
+                                    it[StrategyStats.updatedAt] = Clock.System.now()
+                                }
+                            }
                         }
 
                         scheduler.start(strategy)
@@ -357,6 +369,21 @@ fun Application.configureRouting(
                                     it[ethToUsdPrice] = closeEthPriceBD
                                     it[txTimestamp] = Clock.System.now()
                                     it[createdAt] = Clock.System.now()
+                                }
+                            }
+
+                            if (closeResult?.success == true) {
+                                val closeGasLong = closeResult.gasUsedWei?.toLongOrNull() ?: 0L
+                                val closeStatsRow = StrategyStats.selectAll().where { StrategyStats.strategyId eq strategyId }.firstOrNull()
+                                if (closeStatsRow != null) {
+                                    val closeGasEth = java.math.BigDecimal(closeGasLong).divide(
+                                        java.math.BigDecimal("1000000000000000000"), 18, java.math.RoundingMode.HALF_UP
+                                    )
+                                    StrategyStats.update({ StrategyStats.strategyId eq strategyId }) {
+                                        it[StrategyStats.gasCostWei] = closeStatsRow[StrategyStats.gasCostWei] + closeGasLong
+                                        it[StrategyStats.gasCostUsd] = closeStatsRow[StrategyStats.gasCostUsd] + closeGasEth.multiply(closeEthPriceBD).setScale(2, java.math.RoundingMode.HALF_UP)
+                                        it[StrategyStats.updatedAt] = Clock.System.now()
+                                    }
                                 }
                             }
                         }

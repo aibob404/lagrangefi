@@ -77,7 +77,7 @@ export async function mintPosition(req: MintRequest): Promise<MintResult> {
   const txDetails: TxDetail[] = []
   const deadline = BigInt(Math.floor(Date.now() / 1000)) + DEADLINE_BUFFER
 
-  const trackTx = async (hash: string, action: string) => {
+  const trackTx = async (hash: `0x${string}`, action: string) => {
     const receipt = await publicClient.waitForTransactionReceipt({ hash })
     txDetails.push({ txHash: hash, action, gasUsedWei: Number(receipt.gasUsed * receipt.effectiveGasPrice) })
     return receipt

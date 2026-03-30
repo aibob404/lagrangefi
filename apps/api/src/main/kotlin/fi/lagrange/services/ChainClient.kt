@@ -73,6 +73,7 @@ data class CloseResponse(
     val txDetails: List<TxRecord>? = null,
     val token0Amount: String? = null,
     val token1Amount: String? = null,
+    val feesCollected: FeesCollectedResponse? = null,
     val error: String? = null,
 )
 

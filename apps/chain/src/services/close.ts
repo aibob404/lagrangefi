@@ -110,8 +110,25 @@ export async function closePosition(req: CloseRequest): Promise<CloseResult> {
   })
   const liquidity = position[7]
 
-  // 2. Remove all liquidity (if any)
+  // 2. Simulate decreaseLiquidity to capture principal before executing
+  // (fees = total_collected - principal)
+  let principal0 = 0n
+  let principal1 = 0n
   if (liquidity > 0n) {
+    try {
+      const sim = await publicClient.simulateContract({
+        address: POSITION_MANAGER,
+        abi: POSITION_MANAGER_ABI,
+        functionName: 'decreaseLiquidity',
+        account: account.address,
+        args: [{ tokenId, liquidity, amount0Min: 0n, amount1Min: 0n, deadline }],
+      })
+      principal0 = sim.result[0]
+      principal1 = sim.result[1]
+    } catch {
+      // non-fatal: fees will be 0 (conservative fallback)
+    }
+
     const decreaseTx = await walletClient.writeContract({
       address: POSITION_MANAGER,
       abi: POSITION_MANAGER_ABI,
@@ -192,5 +209,12 @@ export async function closePosition(req: CloseRequest): Promise<CloseResult> {
     txSteps.push('Unwrap WETH')
   }
 
-  return { success: true, txHashes, txSteps, token0Amount, token1Amount }
+  const totalCollected0 = token0Amount ? BigInt(token0Amount) : 0n
+  const totalCollected1 = token1Amount ? BigInt(token1Amount) : 0n
+  const feesCollected = {
+    amount0: (totalCollected0 > principal0 ? totalCollected0 - principal0 : 0n).toString(),
+    amount1: (totalCollected1 > principal1 ? totalCollected1 - principal1 : 0n).toString(),
+  }
+
+  return { success: true, txHashes, txSteps, token0Amount, token1Amount, feesCollected }
 }

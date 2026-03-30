@@ -4,6 +4,8 @@ import fi.lagrange.auth.authRoutes
 import fi.lagrange.auth.getUserId
 import fi.lagrange.model.ChainTransactions
 import fi.lagrange.model.StrategyEvents
+import fi.lagrange.model.StrategyStats
+import fi.lagrange.model.Strategies
 import fi.lagrange.services.ChainClient
 import fi.lagrange.services.StrategyService
 import fi.lagrange.services.TelegramNotifier
@@ -20,7 +22,9 @@ import io.ktor.server.routing.*
 import kotlinx.datetime.Clock
 import kotlinx.serialization.Serializable
 import org.jetbrains.exposed.sql.insert
+import org.jetbrains.exposed.sql.selectAll
 import org.jetbrains.exposed.sql.transactions.transaction
+import org.jetbrains.exposed.sql.update
 
 @Serializable
 data class CreateStrategyRequestDto(
@@ -352,6 +356,39 @@ fun Application.configureRouting(
                                     it[ethToUsdPrice] = closeEthPriceBD
                                     it[txTimestamp] = Clock.System.now()
                                     it[createdAt] = Clock.System.now()
+                                }
+                            }
+                        }
+                        // Accumulate close fees into StrategyStats
+                        val closeFees = closeResult?.feesCollected
+                        if (closeResult?.success == true && closeFees != null) {
+                            val fees0 = closeFees.amount0.toBigIntegerOrNull() ?: java.math.BigInteger.ZERO
+                            val fees1 = closeFees.amount1.toBigIntegerOrNull() ?: java.math.BigInteger.ZERO
+                            if (fees0 > java.math.BigInteger.ZERO || fees1 > java.math.BigInteger.ZERO) {
+                                transaction {
+                                    val statsRow = StrategyStats.selectAll()
+                                        .where { StrategyStats.strategyId eq strategyId }.firstOrNull()
+                                    if (statsRow != null) {
+                                        val strategyRow = Strategies.selectAll()
+                                            .where { Strategies.id eq strategyId }.firstOrNull()
+                                        val dec0 = strategyRow?.get(Strategies.token0Decimals) ?: 18
+                                        val dec1 = strategyRow?.get(Strategies.token1Decimals) ?: 6
+                                        val newFees0 = (statsRow[StrategyStats.feesCollectedToken0].toBigIntegerOrNull() ?: java.math.BigInteger.ZERO) + fees0
+                                        val newFees1 = (statsRow[StrategyStats.feesCollectedToken1].toBigIntegerOrNull() ?: java.math.BigInteger.ZERO) + fees1
+                                        val fee0Human = fees0.toBigDecimal().divide(java.math.BigDecimal.TEN.pow(dec0), dec0, java.math.RoundingMode.HALF_UP)
+                                        val fee1Human = fees1.toBigDecimal().divide(java.math.BigDecimal.TEN.pow(dec1), dec1, java.math.RoundingMode.HALF_UP)
+                                        val ethPriceBD = java.math.BigDecimal(closeEthPrice.toString()).setScale(8, java.math.RoundingMode.HALF_UP)
+                                        val feesUsdNew = if (dec0 == 18)
+                                            fee0Human.multiply(ethPriceBD).add(fee1Human).setScale(2, java.math.RoundingMode.HALF_UP)
+                                        else
+                                            fee1Human.multiply(ethPriceBD).add(fee0Human).setScale(2, java.math.RoundingMode.HALF_UP)
+                                        StrategyStats.update({ StrategyStats.strategyId eq strategyId }) {
+                                            it[feesCollectedToken0] = newFees0.toString()
+                                            it[feesCollectedToken1] = newFees1.toString()
+                                            it[feesCollectedUsd] = statsRow[StrategyStats.feesCollectedUsd] + feesUsdNew
+                                            it[updatedAt] = Clock.System.now()
+                                        }
+                                    }
                                 }
                             }
                         }

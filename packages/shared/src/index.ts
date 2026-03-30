@@ -97,6 +97,8 @@ export interface CloseResult {
   token0Amount?: string
   /** Total token1 collected at close (principal + fees, raw units) */
   token1Amount?: string
+  /** LP fees only (total collected minus principal) — for accumulating into strategy stats */
+  feesCollected?: FeesCollected
   error?: string
 }
 

@@ -110,6 +110,7 @@ data class MintResponse(
     val success: Boolean,
     val tokenId: String? = null,
     val txHashes: List<String>,
+    val txDetails: List<TxRecord>? = null,
     val error: String? = null,
     val gasUsedWei: String? = null,
 )

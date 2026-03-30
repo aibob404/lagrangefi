@@ -206,6 +206,7 @@ private fun stepToAction(step: String): String = when (step.lowercase()) {
     "approve" -> "APPROVE"
     "swap" -> "SWAP"
     "mint" -> "MINT"
+    "wrap" -> "WRAP"
     "withdraw", "withdraw_to_wallet" -> "WITHDRAW_TO_WALLET"
     else -> "UNKNOWN"
 }

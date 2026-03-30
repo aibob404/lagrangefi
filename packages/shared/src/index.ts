@@ -40,6 +40,12 @@ export interface FeesCollected {
   amount1: string
 }
 
+export interface TxDetail {
+  txHash: string
+  action: string
+  gasUsedWei: number
+}
+
 export interface RebalanceResult {
   success: boolean
   txHashes: string[]
@@ -76,6 +82,7 @@ export interface MintResult {
   success: boolean
   tokenId?: string
   txHashes: string[]
+  txDetails?: TxDetail[]
   error?: string
   /** Total gas cost across all mint transactions, in wei */
   gasUsedWei?: string

@@ -203,6 +203,7 @@ fun Application.configureRouting(
                         val mintEthPrice = java.math.BigDecimal(ethPrice.toString()).setScale(8, java.math.RoundingMode.HALF_UP)
                         val mintGasLong = mintResult.gasUsedWei?.toLongOrNull() ?: 0L
                         val startIdempotencyKey = "start-${strategy.id}-${mintResult.tokenId}"
+                        val mintTxRecords = buildTxRecords(mintResult.txDetails, mintResult.txHashes, null, mintGasLong)
                         transaction {
                             val startEventId = StrategyEvents.insert {
                                 it[strategyId] = strategy.id
@@ -213,12 +214,12 @@ fun Application.configureRouting(
                                 it[completedAt] = Clock.System.now()
                             }[StrategyEvents.id]
 
-                            mintResult.txHashes.forEach { hash ->
+                            mintTxRecords.forEach { tx ->
                                 ChainTransactions.insert {
                                     it[strategyEventId] = startEventId
-                                    it[txHash] = hash
-                                    it[ChainTransactions.action] = "MINT"
-                                    it[gasCostWei] = mintGasLong
+                                    it[txHash] = tx.txHash
+                                    it[ChainTransactions.action] = tx.action
+                                    it[gasCostWei] = tx.gasUsedWei
                                     it[ethToUsdPrice] = mintEthPrice
                                     it[txTimestamp] = Clock.System.now()
                                     it[createdAt] = Clock.System.now()

@@ -2,7 +2,7 @@ import { parseEther, parseUnits } from 'viem'
 import { createWalletClientForKey, publicClient } from '../config.js'
 import { calculateSwapAmount, executeSwap, getTokenDecimals } from './swap.js'
 import { getPoolStateByPair } from './uniswap.js'
-import type { MintRequest, MintResult } from '@lagrangefi/shared'
+import type { MintRequest, MintResult, TxDetail } from '@lagrangefi/shared'
 
 const POSITION_MANAGER = '0xC36442b4a4522E871399CD717aBDD847Ab11FE88' as const
 const WETH = '0x82af49447d8a07e3bd95bd0d56f35241523fbab1' as const
@@ -74,9 +74,14 @@ const DEADLINE_BUFFER = 300n
 export async function mintPosition(req: MintRequest): Promise<MintResult> {
   const walletClient = createWalletClientForKey(req.walletPrivateKey)
   const account = walletClient.account!
-  const txHashes: string[] = []
-  const receipts: Awaited<ReturnType<typeof publicClient.waitForTransactionReceipt>>[] = []
+  const txDetails: TxDetail[] = []
   const deadline = BigInt(Math.floor(Date.now() / 1000)) + DEADLINE_BUFFER
+
+  const trackTx = async (hash: string, action: string) => {
+    const receipt = await publicClient.waitForTransactionReceipt({ hash })
+    txDetails.push({ txHash: hash, action, gasUsedWei: Number(receipt.gasUsed * receipt.effectiveGasPrice) })
+    return receipt
+  }
 
   // 1. Wrap ETH → WETH if requested
   const ethAmt = parseFloat(req.ethAmount)
@@ -87,9 +92,7 @@ export async function mintPosition(req: MintRequest): Promise<MintResult> {
       functionName: 'deposit',
       value: parseEther(req.ethAmount),
     })
-    const r = await publicClient.waitForTransactionReceipt({ hash: wrapTx })
-    receipts.push(r)
-    txHashes.push(wrapTx)
+    await trackTx(wrapTx, 'WRAP')
   }
 
   // 2. Transfer USDC into wallet (already there — user must have sent it to the wallet)
@@ -133,8 +136,7 @@ export async function mintPosition(req: MintRequest): Promise<MintResult> {
       deadline,
       walletClient,
     })
-    receipts.push(await publicClient.waitForTransactionReceipt({ hash: swapTx }))
-    txHashes.push(swapTx)
+    await trackTx(swapTx, 'SWAP')
   }
 
   // 6. Re-fetch balances after swap
@@ -145,10 +147,9 @@ export async function mintPosition(req: MintRequest): Promise<MintResult> {
 
   // 7. Approve position manager for both tokens — sequential to avoid nonce collision
   const approveTx0 = await walletClient.writeContract({ address: TOKEN0, abi: ERC20_ABI, functionName: 'approve', args: [POSITION_MANAGER, finalBalance0] })
-  receipts.push(await publicClient.waitForTransactionReceipt({ hash: approveTx0 }))
+  await trackTx(approveTx0, 'APPROVE')
   const approveTx1 = await walletClient.writeContract({ address: TOKEN1, abi: ERC20_ABI, functionName: 'approve', args: [POSITION_MANAGER, finalBalance1] })
-  receipts.push(await publicClient.waitForTransactionReceipt({ hash: approveTx1 }))
-  txHashes.push(approveTx0, approveTx1)
+  await trackTx(approveTx1, 'APPROVE')
 
   // 8. Mint new LP position
   const mintTx = await walletClient.writeContract({
@@ -169,9 +170,7 @@ export async function mintPosition(req: MintRequest): Promise<MintResult> {
       deadline,
     }],
   })
-  const mintReceipt = await publicClient.waitForTransactionReceipt({ hash: mintTx })
-  receipts.push(mintReceipt)
-  txHashes.push(mintTx)
+  const mintReceipt = await trackTx(mintTx, 'MINT')
 
   // 9. Parse new tokenId from ERC721 Transfer event
   const transferLog = mintReceipt.logs.find(
@@ -181,7 +180,8 @@ export async function mintPosition(req: MintRequest): Promise<MintResult> {
   const tokenId = transferLog?.topics[3] ? BigInt(transferLog.topics[3]).toString() : undefined
 
   // 10. Sum gas cost across all transactions
-  const gasUsedWei = receipts.reduce((acc, r) => acc + r.gasUsed * r.effectiveGasPrice, 0n).toString()
+  const gasUsedWei = txDetails.reduce((acc, d) => acc + BigInt(d.gasUsedWei), 0n).toString()
+  const txHashes = txDetails.map(d => d.txHash)
 
-  return { success: true, tokenId, txHashes, gasUsedWei }
+  return { success: true, tokenId, txHashes, txDetails, gasUsedWei }
 }

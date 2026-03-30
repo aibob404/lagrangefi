@@ -146,7 +146,7 @@ export async function closePosition(req: CloseRequest): Promise<CloseResult> {
         deadline,
       }],
     })
-    await trackTx(decreaseTx, 'BURN')
+    await trackTx(decreaseTx, 'REMOVE_LIQUIDITY')
   }
 
   // 3. Simulate collect on current chain state (post-decreaseLiquidity) to capture exact amounts

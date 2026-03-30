@@ -204,7 +204,7 @@ export async function rebalance(req: RebalanceRequest): Promise<RebalanceResult>
       functionName: 'decreaseLiquidity',
       args: [decreaseParams],
     })
-    const decreaseReceipt = await trackTx(decreaseTx, 'BURN')
+    const decreaseReceipt = await trackTx(decreaseTx, 'REMOVE_LIQUIDITY')
     if (decreaseReceipt.status === 'reverted') {
       throw new Error(`decreaseLiquidity reverted (tx: ${decreaseTx})`)
     }

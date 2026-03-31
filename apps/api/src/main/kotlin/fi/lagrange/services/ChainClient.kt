@@ -114,6 +114,8 @@ data class MintResponse(
     val txDetails: List<TxRecord>? = null,
     val error: String? = null,
     val gasUsedWei: String? = null,
+    val amount0: String? = null,
+    val amount1: String? = null,
 )
 
 class ChainClient(private val baseUrl: String) {

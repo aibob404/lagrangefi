@@ -194,9 +194,26 @@ export async function mintPosition(req: MintRequest): Promise<MintResult> {
   )
   const tokenId = transferLog?.topics[3] ? BigInt(transferLog.topics[3]).toString() : undefined
 
-  // 10. Sum gas cost across all transactions
+  // 10. Parse actual deposited amounts from IncreaseLiquidity event
+  // keccak256("IncreaseLiquidity(uint256,uint128,uint256,uint256)")
+  const INCREASE_LIQUIDITY_TOPIC = '0x3067048beee31b25b2f1681f88dac838c8bba36af25bfb2b7cf7473a5847e35f'
+  const mintLog = mintReceipt.logs.find(
+    log => log.address.toLowerCase() === POSITION_MANAGER.toLowerCase()
+      && log.topics[0]?.toLowerCase() === INCREASE_LIQUIDITY_TOPIC.toLowerCase()
+  )
+  let amount0: string | undefined
+  let amount1: string | undefined
+  if (mintLog?.data && mintLog.data !== '0x') {
+    const data = mintLog.data.slice(2)
+    // IncreaseLiquidity data: [liquidity(32 bytes)][amount0(32 bytes)][amount1(32 bytes)]
+    // tokenId is indexed (topics[1]), so data starts with liquidity
+    amount0 = BigInt('0x' + data.slice(64, 128)).toString()
+    amount1 = BigInt('0x' + data.slice(128, 192)).toString()
+  }
+
+  // 11. Sum gas cost across all transactions
   const gasUsedWei = txDetails.reduce((acc, d) => acc + BigInt(d.gasUsedWei), 0n).toString()
   const txHashes = txDetails.map(d => d.txHash)
 
-  return { success: true, tokenId, txHashes, txDetails, gasUsedWei }
+  return { success: true, tokenId, txHashes, txDetails, gasUsedWei, amount0, amount1 }
 }

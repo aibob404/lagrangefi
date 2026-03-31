@@ -87,6 +87,9 @@ export interface MintResult {
   error?: string
   /** Total gas cost across all mint transactions, in wei */
   gasUsedWei?: string
+  /** Actual amounts deposited into the LP position (from IncreaseLiquidity event) */
+  amount0?: string
+  amount1?: string
 }
 
 export interface CloseRequest {

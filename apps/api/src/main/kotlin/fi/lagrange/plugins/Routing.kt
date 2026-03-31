@@ -165,20 +165,30 @@ fun Application.configureRouting(
                         return@post call.respond(HttpStatusCode.ServiceUnavailable, mapOf("error" to "Position minted but could not fetch details: ${e.message}"))
                     }
 
-                    // Convert human-readable amounts to raw units and compute initial USD value
+                    // Use actual deposited amounts from IncreaseLiquidity event if available,
+                    // falling back to the user's intent. This prevents day-0 IL from appearing
+                    // due to Uniswap returning dust that didn't fit the tick ratio.
                     val ethPrice = poolState.price.toDoubleOrNull() ?: 0.0
-                    val initialToken0 = runCatching {
+                    val initialToken0 = mintResult.amount0 ?: runCatching {
                         java.math.BigDecimal(req.ethAmount)
                             .multiply(java.math.BigDecimal.TEN.pow(poolState.decimals0))
                             .toBigInteger().toString()
                     }.getOrNull()
-                    val initialToken1 = runCatching {
+                    val initialToken1 = mintResult.amount1 ?: runCatching {
                         java.math.BigDecimal(req.usdcAmount)
                             .multiply(java.math.BigDecimal.TEN.pow(poolState.decimals1))
                             .toBigInteger().toString()
                     }.getOrNull()
-                    val initialValueUsd = (req.ethAmount.toDoubleOrNull() ?: 0.0) * ethPrice +
+                    val initialValueUsd = if (mintResult.amount0 != null && mintResult.amount1 != null) {
+                        val t0 = mintResult.amount0.toBigIntegerOrNull()?.toBigDecimal()
+                            ?.divide(java.math.BigDecimal.TEN.pow(poolState.decimals0), poolState.decimals0, java.math.RoundingMode.HALF_UP)?.toDouble() ?: 0.0
+                        val t1 = mintResult.amount1.toBigIntegerOrNull()?.toBigDecimal()
+                            ?.divide(java.math.BigDecimal.TEN.pow(poolState.decimals1), poolState.decimals1, java.math.RoundingMode.HALF_UP)?.toDouble() ?: 0.0
+                        t0 * ethPrice + t1
+                    } else {
+                        (req.ethAmount.toDoubleOrNull() ?: 0.0) * ethPrice +
                             (req.usdcAmount.toDoubleOrNull() ?: 0.0)
+                    }
 
                     try {
                         val strategy = strategyService.create(

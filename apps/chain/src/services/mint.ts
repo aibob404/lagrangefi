@@ -158,7 +158,10 @@ export async function mintPosition(req: MintRequest): Promise<MintResult> {
   const usdcDelta = postBalance1 >= prevBalance1
     ? postBalance1 - prevBalance1          // swap added USDC (or no swap)
     : -(prevBalance1 - postBalance1)       // swap spent USDC (negative)
-  const finalBalance1 = intended1 + usdcDelta > 0n ? intended1 + usdcDelta : 0n
+  const raw1 = intended1 + usdcDelta
+  // Cap at actual wallet balance: if usdcAmount was rounded up slightly above the real
+  // balance, raw1 can exceed postBalance1 by a few units, causing SafeTransferFrom to fail.
+  const finalBalance1 = raw1 <= 0n ? 0n : raw1 > postBalance1 ? postBalance1 : raw1
 
   // 7. Approve position manager for both tokens — sequential to avoid nonce collision
   const approveTx0 = await walletClient.writeContract({ address: TOKEN0, abi: ERC20_ABI, functionName: 'approve', args: [POSITION_MANAGER, finalBalance0] })

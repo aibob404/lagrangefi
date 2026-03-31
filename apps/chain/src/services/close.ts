@@ -158,7 +158,10 @@ export async function closePosition(req: CloseRequest): Promise<CloseResult> {
         deadline,
       }],
     })
-    await trackTx(decreaseTx, 'REMOVE_LIQUIDITY')
+    const decreaseReceipt = await trackTx(decreaseTx, 'REMOVE_LIQUIDITY')
+    if (decreaseReceipt.status === 'reverted') {
+      throw new Error(`decreaseLiquidity reverted (tx: ${decreaseTx})`)
+    }
   }
 
   // 3. Execute collect and parse exact amounts from the Collect event

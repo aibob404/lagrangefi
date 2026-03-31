@@ -171,6 +171,24 @@ export async function rebalance(req: RebalanceRequest): Promise<RebalanceResult>
   const tokensOwed0 = position[10]
   const tokensOwed1 = position[11]
 
+  // Extract token addresses early — needed for pre-collect balance snapshot
+  const token0 = position[2] as `0x${string}`
+  const token1 = position[3] as `0x${string}`
+  const fee = position[4]
+
+  // Pending tokens from the previous mint cycle that should be folded into this rebalance
+  const pending0 = BigInt(req.pendingToken0 ?? '0')
+  const pending1 = BigInt(req.pendingToken1 ?? '0')
+
+  // Snapshot wallet balance before collect so we can isolate true dust
+  // (anything in the wallet that is NOT our tracked pending from the last cycle).
+  const [preCollectBalance0, preCollectBalance1] = await Promise.all([
+    publicClient.readContract({ address: token0, abi: ERC20_ABI, functionName: 'balanceOf', args: [account.address] }),
+    publicClient.readContract({ address: token1, abi: ERC20_ABI, functionName: 'balanceOf', args: [account.address] }),
+  ])
+  const trueDust0 = preCollectBalance0 > pending0 ? preCollectBalance0 - pending0 : 0n
+  const trueDust1 = preCollectBalance1 > pending1 ? preCollectBalance1 - pending1 : 0n
+
   let principal0 = 0n
   let principal1 = 0n
 
@@ -255,10 +273,7 @@ export async function rebalance(req: RebalanceRequest): Promise<RebalanceResult>
     await trackTx(burnTx, 'BURN')
   }
 
-  // 4. Extract position token addresses and fee
-  const token0 = position[2] as `0x${string}`
-  const token1 = position[3] as `0x${string}`
-  const fee = position[4]
+  // 4. (token0, token1, fee already extracted above)
 
   // 5. Get token decimals and pool state
   const [decimals0, decimals1, poolState] = await Promise.all([
@@ -289,20 +304,18 @@ export async function rebalance(req: RebalanceRequest): Promise<RebalanceResult>
     }),
   ])
 
-  // 6. Fetch balances after collection for the swap calculation (uses full wallet balance
-  //    so pre-existing dust is also deployed into the new position)
-  const [balance0, balance1] = await Promise.all([
-    publicClient.readContract({ address: token0, abi: ERC20_ABI, functionName: 'balanceOf', args: [account.address] }),
-    publicClient.readContract({ address: token1, abi: ERC20_ABI, functionName: 'balanceOf', args: [account.address] }),
-  ])
-  // positionToken0Start tracks only what came out of this LP (principal + fees), not stale
-  // wallet dust from previous strategies — so P&L reflects this position's true start value.
-  const positionToken0Start = (collectedFromPosition?.amount0 ?? 0n).toString()
-  const positionToken1Start = (collectedFromPosition?.amount1 ?? 0n).toString()
+  // 6. Compute working capital = collected from position + pending from last cycle.
+  //    This excludes true wallet dust (anything beyond our tracked pending).
+  const totalToUse0 = (collectedFromPosition?.amount0 ?? 0n) + pending0
+  const totalToUse1 = (collectedFromPosition?.amount1 ?? 0n) + pending1
+
+  // positionToken0Start = everything entering the new position (collected + pending)
+  const positionToken0Start = totalToUse0.toString()
+  const positionToken1Start = totalToUse1.toString()
 
   const swap = calculateSwapAmount({
-    balance0,
-    balance1,
+    balance0: totalToUse0,
+    balance1: totalToUse1,
     decimals0,
     decimals1,
     sqrtPriceX96: poolState[0],
@@ -325,16 +338,19 @@ export async function rebalance(req: RebalanceRequest): Promise<RebalanceResult>
     await trackTx(swapTx, 'SWAP')
   }
 
-  // Re-fetch balances after the swap
-  const [finalBalance0, finalBalance1] = await Promise.all([
+  // Re-fetch balances after the swap, then subtract trueDust to get usable amounts only.
+  // trueDust = whatever was in the wallet before we started that isn't our pending capital.
+  const [postSwapBalance0, postSwapBalance1] = await Promise.all([
     publicClient.readContract({ address: token0, abi: ERC20_ABI, functionName: 'balanceOf', args: [account.address] }),
     publicClient.readContract({ address: token1, abi: ERC20_ABI, functionName: 'balanceOf', args: [account.address] }),
   ])
+  const finalUsable0 = postSwapBalance0 > trueDust0 ? postSwapBalance0 - trueDust0 : 0n
+  const finalUsable1 = postSwapBalance1 > trueDust1 ? postSwapBalance1 - trueDust1 : 0n
 
-  // 8. Approve position manager to spend final token balances — sequential to avoid nonce collision
-  const approveTx0 = await walletClient.writeContract({ address: token0, abi: ERC20_ABI, functionName: 'approve', args: [POSITION_MANAGER, finalBalance0] })
+  // 8. Approve position manager for usable amounts only — sequential to avoid nonce collision
+  const approveTx0 = await walletClient.writeContract({ address: token0, abi: ERC20_ABI, functionName: 'approve', args: [POSITION_MANAGER, finalUsable0] })
   await trackTx(approveTx0, 'APPROVE')
-  const approveTx1 = await walletClient.writeContract({ address: token1, abi: ERC20_ABI, functionName: 'approve', args: [POSITION_MANAGER, finalBalance1] })
+  const approveTx1 = await walletClient.writeContract({ address: token1, abi: ERC20_ABI, functionName: 'approve', args: [POSITION_MANAGER, finalUsable1] })
   await trackTx(approveTx1, 'APPROVE')
 
   // 9. Mint new position at new range
@@ -348,8 +364,8 @@ export async function rebalance(req: RebalanceRequest): Promise<RebalanceResult>
       fee,
       tickLower: req.newTickLower,
       tickUpper: req.newTickUpper,
-      amount0Desired: finalBalance0,
-      amount1Desired: finalBalance1,
+      amount0Desired: finalUsable0,
+      amount1Desired: finalUsable1,
       amount0Min: 0n,
       amount1Min: 0n,
       recipient: account.address,
@@ -391,8 +407,14 @@ export async function rebalance(req: RebalanceRequest): Promise<RebalanceResult>
   const txHashes = txDetails.map(d => d.txHash)
   const gasUsedWei = txDetails.reduce((acc, d) => acc + BigInt(d.gasUsedWei), 0n).toString()
 
+  // Compute leftover — tokens that did not fit into the new LP position
+  const deposited0 = positionToken0End ? BigInt(positionToken0End) : 0n
+  const deposited1 = positionToken1End ? BigInt(positionToken1End) : 0n
+  const leftoverToken0 = (finalUsable0 > deposited0 ? finalUsable0 - deposited0 : 0n).toString()
+  const leftoverToken1 = (finalUsable1 > deposited1 ? finalUsable1 - deposited1 : 0n).toString()
+
   const isRecovery = liquidity === 0n
-  return { success: true, txHashes, txDetails, newTokenId, feesCollected, gasUsedWei, positionToken0Start, positionToken1Start, positionToken0End, positionToken1End, isRecovery }
+  return { success: true, txHashes, txDetails, newTokenId, feesCollected, gasUsedWei, positionToken0Start, positionToken1Start, positionToken0End, positionToken1End, isRecovery, leftoverToken0, leftoverToken1 }
 
   } catch (err) {
     // Recovery: collect tokens back to wallet so they are not stranded in the position manager

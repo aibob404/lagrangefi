@@ -178,8 +178,6 @@ export async function closePosition(req: CloseRequest): Promise<CloseResult> {
   })
   const collectReceipt = await trackTx(collectTx, 'COLLECT_FEES')
   const collected = parseTotalCollected(collectReceipt)
-  const token0Amount = collected?.amount0.toString()
-  const token1Amount = collected?.amount1.toString()
 
   // 4. Burn the NFT
   const burnTx = await walletClient.writeContract({
@@ -190,20 +188,27 @@ export async function closePosition(req: CloseRequest): Promise<CloseResult> {
   })
   await trackTx(burnTx, 'BURN')
 
-  // 5. Unwrap only the WETH that came from this position (from Collect event)
-  const wethFromPosition = collected?.amount0 ?? 0n
-  if (wethFromPosition > 0n) {
+  // 5. Unwrap WETH from this position + any pending WETH from the last rebalance cycle
+  const pending0 = BigInt(req.pendingToken0 ?? '0')
+  const pending1 = BigInt(req.pendingToken1 ?? '0')
+  const wethToUnwrap = (collected?.amount0 ?? 0n) + pending0
+  if (wethToUnwrap > 0n) {
     const unwrapTx = await walletClient.writeContract({
       address: WETH,
       abi: WETH_ABI,
       functionName: 'withdraw',
-      args: [wethFromPosition],
+      args: [wethToUnwrap],
     })
     await trackTx(unwrapTx, 'WITHDRAW_TO_WALLET')
   }
 
   const totalCollected0 = collected?.amount0 ?? 0n
   const totalCollected1 = collected?.amount1 ?? 0n
+
+  // Include pending tokens in reported amounts so P&L reflects all capital returned
+  const token0Amount = (totalCollected0 + pending0).toString()
+  const token1Amount = (totalCollected1 + pending1).toString()
+
   const feesCollected = {
     amount0: (totalCollected0 > principal0 ? totalCollected0 - principal0 : 0n).toString(),
     amount1: (totalCollected1 > principal1 ? totalCollected1 - principal1 : 0n).toString(),

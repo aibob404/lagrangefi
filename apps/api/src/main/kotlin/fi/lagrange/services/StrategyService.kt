@@ -37,6 +37,8 @@ data class StrategyRecord(
     val endToken1Amount: String?,
     val endValueUsd: Double?,
     val endEthPriceUsd: Double?,
+    val pendingToken0: String,
+    val pendingToken1: String,
 )
 
 @Serializable
@@ -112,6 +114,8 @@ class StrategyService {
         initialToken1Amount: String? = null,
         initialValueUsd: Double? = null,
         openEthPriceUsd: Double? = null,
+        pendingToken0: String = "0",
+        pendingToken1: String = "0",
     ): StrategyRecord = transaction {
         val activeCount = Strategies.selectAll()
             .where { (Strategies.userId eq userId) and (Strategies.status inList listOf("ACTIVE", "INITIATING")) }
@@ -140,6 +144,8 @@ class StrategyService {
             it[Strategies.initialToken1Amount] = initialToken1Amount
             it[Strategies.initialValueUsd] = initialValueBD
             it[Strategies.openEthPriceUsd] = openEthBD
+            it[Strategies.pendingToken0] = pendingToken0
+            it[Strategies.pendingToken1] = pendingToken1
         } get Strategies.id
 
         StrategyStats.insert {
@@ -182,6 +188,14 @@ class StrategyService {
     fun updateTokenId(strategyId: Int, newTokenId: String) = transaction {
         Strategies.update({ Strategies.id eq strategyId }) {
             it[currentTokenId] = newTokenId
+        }
+    }
+
+    /** Store leftover tokens that did not fit into the last LP mint — carried into the next rebalance */
+    fun updatePending(strategyId: Int, pending0: String, pending1: String) = transaction {
+        Strategies.update({ Strategies.id eq strategyId }) {
+            it[pendingToken0] = pending0
+            it[pendingToken1] = pending1
         }
     }
 
@@ -451,5 +465,7 @@ class StrategyService {
         endToken1Amount = row[Strategies.endToken1Amount],
         endValueUsd = row[Strategies.endValueUsd]?.toDouble(),
         endEthPriceUsd = row[Strategies.endEthPriceUsd]?.toDouble(),
+        pendingToken0 = row[Strategies.pendingToken0],
+        pendingToken1 = row[Strategies.pendingToken1],
     )
 }

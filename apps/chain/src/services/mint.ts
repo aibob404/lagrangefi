@@ -211,9 +211,15 @@ export async function mintPosition(req: MintRequest): Promise<MintResult> {
     amount1 = BigInt('0x' + data.slice(128, 192)).toString()
   }
 
-  // 11. Sum gas cost across all transactions
+  // 11. Compute leftover — tokens that did not fit into the LP position
+  const deposited0 = amount0 ? BigInt(amount0) : 0n
+  const deposited1 = amount1 ? BigInt(amount1) : 0n
+  const leftoverToken0 = (finalBalance0 > deposited0 ? finalBalance0 - deposited0 : 0n).toString()
+  const leftoverToken1 = (finalBalance1 > deposited1 ? finalBalance1 - deposited1 : 0n).toString()
+
+  // 12. Sum gas cost across all transactions
   const gasUsedWei = txDetails.reduce((acc, d) => acc + BigInt(d.gasUsedWei), 0n).toString()
   const txHashes = txDetails.map(d => d.txHash)
 
-  return { success: true, tokenId, txHashes, txDetails, gasUsedWei, amount0, amount1 }
+  return { success: true, tokenId, txHashes, txDetails, gasUsedWei, amount0, amount1, leftoverToken0, leftoverToken1 }
 }

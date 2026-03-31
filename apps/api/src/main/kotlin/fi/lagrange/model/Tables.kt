@@ -49,6 +49,9 @@ object Strategies : Table("strategies") {
     val endToken1Amount = varchar("end_token1_amount", 78).nullable()
     val endValueUsd = decimal("end_value_usd", 18, 2).nullable()
     val endEthPriceUsd = decimal("end_eth_price_usd", 18, 8).nullable()
+    /** Leftover tokens that did not fit into the last LP position (carried into the next rebalance) */
+    val pendingToken0 = varchar("pending_token0", 78).default("0")
+    val pendingToken1 = varchar("pending_token1", 78).default("0")
     override val primaryKey = PrimaryKey(id)
 }
 

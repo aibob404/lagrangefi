@@ -84,6 +84,8 @@ class UniswapStrategy(
                 newTickUpper = newTickUpper,
                 slippageTolerance = strategy.slippageTolerance,
                 walletPrivateKey = walletPhrase,
+                pendingToken0 = strategy.pendingToken0,
+                pendingToken1 = strategy.pendingToken1,
             )
 
             if (result.success) {
@@ -118,6 +120,13 @@ class UniswapStrategy(
                 result.newTokenId?.let { newId ->
                     strategyService.updateTokenId(strategy.id, newId)
                 }
+
+                // Persist leftover tokens for the next rebalance cycle
+                strategyService.updatePending(
+                    strategyId = strategy.id,
+                    pending0 = result.leftoverToken0 ?: "0",
+                    pending1 = result.leftoverToken1 ?: "0",
+                )
 
                 // Snapshot position after successful rebalance
                 val t0End = result.positionToken0End ?: "0"

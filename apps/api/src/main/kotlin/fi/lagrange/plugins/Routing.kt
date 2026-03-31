@@ -207,6 +207,8 @@ fun Application.configureRouting(
                             initialToken1Amount = initialToken1,
                             initialValueUsd = initialValueUsd,
                             openEthPriceUsd = ethPrice,
+                            pendingToken0 = mintResult.leftoverToken0 ?: "0",
+                            pendingToken1 = mintResult.leftoverToken1 ?: "0",
                         )
 
                         // Record START_STRATEGY event and mint ChainTransactions
@@ -326,7 +328,13 @@ fun Application.configureRouting(
                         val walletPhrase = walletService.getDecryptedPhrase(userId)
                         if (walletPhrase != null) {
                             val idempotencyKey = "close-$strategyId-${System.currentTimeMillis()}"
-                            closeResult = chainClient.close(idempotencyKey, strategy.currentTokenId, walletPhrase)
+                            closeResult = chainClient.close(
+                                idempotencyKey = idempotencyKey,
+                                tokenId = strategy.currentTokenId,
+                                walletPrivateKey = walletPhrase,
+                                pendingToken0 = strategy.pendingToken0,
+                                pendingToken1 = strategy.pendingToken1,
+                            )
                         }
                     } catch (_: Exception) { /* non-fatal: DB is already updated */ }
                     // Snapshot ETH price and withdrawn amounts onto Strategies when stopped

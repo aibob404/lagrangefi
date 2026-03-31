@@ -110,5 +110,7 @@ class StrategyScheduler(
         endToken1Amount = row[Strategies.endToken1Amount],
         endValueUsd = row[Strategies.endValueUsd]?.toDouble(),
         endEthPriceUsd = row[Strategies.endEthPriceUsd]?.toDouble(),
+        pendingToken0 = row[Strategies.pendingToken0],
+        pendingToken1 = row[Strategies.pendingToken1],
     )
 }

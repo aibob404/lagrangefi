@@ -216,6 +216,7 @@ export async function rebalance(req: RebalanceRequest): Promise<RebalanceResult>
   // From this point on, liquidity has been removed. If anything below fails, we must collect
   // any stranded tokens back to the wallet so they are never left in the contract.
   let feesCollected: FeesCollected | undefined
+  let collectedFromPosition: { amount0: bigint; amount1: bigint } | undefined
 
   try {
 
@@ -236,6 +237,7 @@ export async function rebalance(req: RebalanceRequest): Promise<RebalanceResult>
 
     // Parse total collected from Collect event, then subtract principal to get LP fees only
     const totalCollected = parseTotalCollected(collectReceipt)
+    collectedFromPosition = totalCollected
     feesCollected = totalCollected
       ? {
           amount0: (totalCollected.amount0 > principal0 ? totalCollected.amount0 - principal0 : 0n).toString(),
@@ -287,13 +289,16 @@ export async function rebalance(req: RebalanceRequest): Promise<RebalanceResult>
     }),
   ])
 
-  // 6. Fetch balances after collection — this is the start position value (liquidity + fees)
+  // 6. Fetch balances after collection for the swap calculation (uses full wallet balance
+  //    so pre-existing dust is also deployed into the new position)
   const [balance0, balance1] = await Promise.all([
     publicClient.readContract({ address: token0, abi: ERC20_ABI, functionName: 'balanceOf', args: [account.address] }),
     publicClient.readContract({ address: token1, abi: ERC20_ABI, functionName: 'balanceOf', args: [account.address] }),
   ])
-  const positionToken0Start = balance0.toString()
-  const positionToken1Start = balance1.toString()
+  // positionToken0Start tracks only what came out of this LP (principal + fees), not stale
+  // wallet dust from previous strategies — so P&L reflects this position's true start value.
+  const positionToken0Start = (collectedFromPosition?.amount0 ?? 0n).toString()
+  const positionToken1Start = (collectedFromPosition?.amount1 ?? 0n).toString()
 
   const swap = calculateSwapAmount({
     balance0,

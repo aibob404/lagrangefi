@@ -13,13 +13,6 @@ const WETH_ABI = [
     inputs: [{ name: 'wad', type: 'uint256' }],
     outputs: [],
   },
-  {
-    name: 'balanceOf',
-    type: 'function',
-    stateMutability: 'view',
-    inputs: [{ name: 'account', type: 'address' }],
-    outputs: [{ name: '', type: 'uint256' }],
-  },
 ] as const
 
 const POSITION_MANAGER_ABI = [
@@ -92,6 +85,25 @@ const POSITION_MANAGER_ABI = [
 const MAX_UINT128 = 2n ** 128n - 1n
 const DEADLINE_BUFFER = 300n // 5 minutes
 
+// keccak256("Collect(uint256,address,uint256,uint256)")
+const COLLECT_EVENT_TOPIC = '0x40d0efd1a53d60ecbf40971b9daf7dc90178c3aadc7aab1765632738fa8b8f01' as const
+
+function parseTotalCollected(
+  receipt: Awaited<ReturnType<typeof publicClient.waitForTransactionReceipt>>
+): { amount0: bigint; amount1: bigint } | undefined {
+  const log = receipt.logs.find(
+    (l) =>
+      l.address.toLowerCase() === POSITION_MANAGER.toLowerCase() &&
+      l.topics[0]?.toLowerCase() === COLLECT_EVENT_TOPIC.toLowerCase()
+  )
+  if (!log || !log.data || log.data === '0x') return undefined
+  const data = log.data.slice(2)
+  if (data.length < 192) return undefined
+  const amount0 = BigInt('0x' + data.slice(64, 128))
+  const amount1 = BigInt('0x' + data.slice(128, 192))
+  return { amount0, amount1 }
+}
+
 
 export async function closePosition(req: CloseRequest): Promise<CloseResult> {
   const walletClient = createWalletClientForKey(req.walletPrivateKey)
@@ -149,24 +161,7 @@ export async function closePosition(req: CloseRequest): Promise<CloseResult> {
     await trackTx(decreaseTx, 'REMOVE_LIQUIDITY')
   }
 
-  // 3. Simulate collect on current chain state (post-decreaseLiquidity) to capture exact amounts
-  let token0Amount: string | undefined
-  let token1Amount: string | undefined
-  try {
-    const { result: collected } = await publicClient.simulateContract({
-      address: POSITION_MANAGER,
-      abi: POSITION_MANAGER_ABI,
-      functionName: 'collect',
-      args: [{ tokenId, recipient: account.address, amount0Max: MAX_UINT128, amount1Max: MAX_UINT128 }],
-      account: account.address,
-    })
-    token0Amount = collected[0].toString()
-    token1Amount = collected[1].toString()
-  } catch {
-    // non-fatal: amounts remain undefined
-  }
-
-  // 3b. Execute collect
+  // 3. Execute collect and parse exact amounts from the Collect event
   const collectTx = await walletClient.writeContract({
     address: POSITION_MANAGER,
     abi: POSITION_MANAGER_ABI,
@@ -178,7 +173,10 @@ export async function closePosition(req: CloseRequest): Promise<CloseResult> {
       amount1Max: MAX_UINT128,
     }],
   })
-  await trackTx(collectTx, 'COLLECT_FEES')
+  const collectReceipt = await trackTx(collectTx, 'COLLECT_FEES')
+  const collected = parseTotalCollected(collectReceipt)
+  const token0Amount = collected?.amount0.toString()
+  const token1Amount = collected?.amount1.toString()
 
   // 4. Burn the NFT
   const burnTx = await walletClient.writeContract({
@@ -189,25 +187,20 @@ export async function closePosition(req: CloseRequest): Promise<CloseResult> {
   })
   await trackTx(burnTx, 'BURN')
 
-  // 5. Unwrap WETH → ETH so the wallet holds native ETH for future LP starts
-  const wethBalance = await publicClient.readContract({
-    address: WETH,
-    abi: WETH_ABI,
-    functionName: 'balanceOf',
-    args: [account.address],
-  })
-  if (wethBalance > 0n) {
+  // 5. Unwrap only the WETH that came from this position (from Collect event)
+  const wethFromPosition = collected?.amount0 ?? 0n
+  if (wethFromPosition > 0n) {
     const unwrapTx = await walletClient.writeContract({
       address: WETH,
       abi: WETH_ABI,
       functionName: 'withdraw',
-      args: [wethBalance],
+      args: [wethFromPosition],
     })
     await trackTx(unwrapTx, 'WITHDRAW_TO_WALLET')
   }
 
-  const totalCollected0 = token0Amount ? BigInt(token0Amount) : 0n
-  const totalCollected1 = token1Amount ? BigInt(token1Amount) : 0n
+  const totalCollected0 = collected?.amount0 ?? 0n
+  const totalCollected1 = collected?.amount1 ?? 0n
   const feesCollected = {
     amount0: (totalCollected0 > principal0 ? totalCollected0 - principal0 : 0n).toString(),
     amount1: (totalCollected1 > principal1 ? totalCollected1 - principal1 : 0n).toString(),

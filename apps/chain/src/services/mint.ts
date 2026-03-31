@@ -142,14 +142,23 @@ export async function mintPosition(req: MintRequest): Promise<MintResult> {
     await trackTx(swapTx, 'SWAP')
   }
 
-  // 6. Re-fetch balances and compute only "our" amounts (delta vs pre-existing snapshot).
-  //    This correctly accounts for the swap outcome without touching pre-existing funds.
+  // 6. Re-fetch balances and compute only "our" amounts (intended ± swap delta).
+  //    We can't use a simple delta for token1 because the user's USDC was already in
+  //    the wallet before we snapshotted prevBalance1.  Instead:
+  //      finalBalance0 = delta from prevBalance0  (wrap added WETH, swap may have added/removed it)
+  //      finalBalance1 = intended1 + (postBalance1 - prevBalance1)
+  //                    = intended1 - usdc_spent   (if swap sold USDC)
+  //                    = intended1 + usdc_received (if swap bought USDC)
+  //    This isolates exactly the intended capital regardless of pre-existing wallet funds.
   const [postBalance0, postBalance1] = await Promise.all([
     publicClient.readContract({ address: TOKEN0, abi: ERC20_ABI, functionName: 'balanceOf', args: [account.address] }),
     publicClient.readContract({ address: TOKEN1, abi: ERC20_ABI, functionName: 'balanceOf', args: [account.address] }),
   ])
   const finalBalance0 = postBalance0 > prevBalance0 ? postBalance0 - prevBalance0 : 0n
-  const finalBalance1 = postBalance1 > prevBalance1 ? postBalance1 - prevBalance1 : 0n
+  const usdcDelta = postBalance1 >= prevBalance1
+    ? postBalance1 - prevBalance1          // swap added USDC (or no swap)
+    : -(prevBalance1 - postBalance1)       // swap spent USDC (negative)
+  const finalBalance1 = intended1 + usdcDelta > 0n ? intended1 + usdcDelta : 0n
 
   // 7. Approve position manager for both tokens — sequential to avoid nonce collision
   const approveTx0 = await walletClient.writeContract({ address: TOKEN0, abi: ERC20_ABI, functionName: 'approve', args: [POSITION_MANAGER, finalBalance0] })

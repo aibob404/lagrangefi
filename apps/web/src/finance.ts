@@ -51,14 +51,18 @@ export function computeIL(
 }
 
 // ── Total Return (#2) ────────────────────────────────────────────────────────
-// For active:  (current_position_usd + fees_collected_usd) - initial_deposit_usd
-// For stopped: (withdrawn_usd + fees_collected_usd) - initial_deposit_usd
+// Net Return = currentTotalValueUsd - initialValueUsd - gasCostUsd
+//
+// currentTotalValueUsd (active)  = LP principal + unclaimed fees + pending wallet tokens
+// currentTotalValueUsd (stopped) = endValueUsd (already includes pending + collected at close)
 
 export interface TotalReturnResult {
   totalReturnUsd: number
   totalReturnPct: number | null
-  positionValueUsd: number   // current (active) or withdrawn (stopped)
-  feesCollectedUsd: number
+  currentTotalValueUsd: number
+  lpValueUsd: number          // LP principal only
+  unclaimedFeesUsd: number    // tokensOwed (not yet collected)
+  pendingValueUsd: number     // wallet leftover from last mint cycle
   gasSpentUsd: number
 }
 
@@ -69,50 +73,71 @@ export function computeTotalReturn(
   dec1: number,
   label0: string,
   currentEthPrice: number,
-  // For active strategies: pass live position token amounts
+  // For active strategies: live LP principal amounts
   liveToken0Raw?: string,
   liveToken1Raw?: string,
+  // For active strategies: unclaimed fees sitting in the position (tokensOwed)
+  liveTokensOwed0Raw?: string,
+  liveTokensOwed1Raw?: string,
 ): TotalReturnResult | null {
   if (!strategy.initialValueUsd) return null
-
-  let positionValueUsd: number
-
-  if (strategy.status === 'STOPPED_MANUALLY' || strategy.status === 'STOPPED_ON_ERROR') {
-    if (strategy.endToken0Amount && strategy.endToken1Amount && strategy.endEthPriceUsd) {
-      const c0 = rawToFloat(strategy.endToken0Amount, dec0)
-      const c1 = rawToFloat(strategy.endToken1Amount, dec1)
-      positionValueUsd = label0.includes('WETH')
-        ? c0 * strategy.endEthPriceUsd + c1
-        : c1 * strategy.endEthPriceUsd + c0
-    } else if (strategy.endValueUsd != null) {
-      positionValueUsd = strategy.endValueUsd
-    } else {
-      return null
-    }
-  } else {
-    if (!liveToken0Raw || !liveToken1Raw) return null
-    const t0 = rawToFloat(liveToken0Raw, dec0)
-    const t1 = rawToFloat(liveToken1Raw, dec1)
-    positionValueUsd = label0.includes('WETH')
-      ? t0 * currentEthPrice + t1
-      : t1 * currentEthPrice + t0
-  }
-
-  const feesCollectedUsd = stats.feesCollectedUsd > 0
-    ? stats.feesCollectedUsd
-    : (rawToFloat(stats.feesCollectedToken0, dec0) * currentEthPrice +
-       rawToFloat(stats.feesCollectedToken1, dec1))
 
   const gasSpentUsd = stats.gasCostUsd > 0
     ? stats.gasCostUsd
     : ((stats.gasCostWei / 1e18) * currentEthPrice)
 
-  const totalReturnUsd = (positionValueUsd + feesCollectedUsd) - strategy.initialValueUsd
+  let currentTotalValueUsd: number
+  let lpValueUsd: number
+  let unclaimedFeesUsd = 0
+  let pendingValueUsd = 0
+
+  if (strategy.status === 'STOPPED_MANUALLY' || strategy.status === 'STOPPED_ON_ERROR') {
+    // endValueUsd already includes pending + all collected tokens at close price
+    if (strategy.endValueUsd != null) {
+      currentTotalValueUsd = strategy.endValueUsd
+      lpValueUsd = strategy.endValueUsd
+    } else if (strategy.endToken0Amount && strategy.endToken1Amount && strategy.endEthPriceUsd) {
+      const c0 = rawToFloat(strategy.endToken0Amount, dec0)
+      const c1 = rawToFloat(strategy.endToken1Amount, dec1)
+      currentTotalValueUsd = label0.includes('WETH')
+        ? c0 * strategy.endEthPriceUsd + c1
+        : c1 * strategy.endEthPriceUsd + c0
+      lpValueUsd = currentTotalValueUsd
+    } else {
+      return null
+    }
+  } else {
+    if (!liveToken0Raw || !liveToken1Raw) return null
+
+    const t0 = rawToFloat(liveToken0Raw, dec0)
+    const t1 = rawToFloat(liveToken1Raw, dec1)
+    lpValueUsd = label0.includes('WETH')
+      ? t0 * currentEthPrice + t1
+      : t1 * currentEthPrice + t0
+
+    if (liveTokensOwed0Raw && liveTokensOwed1Raw) {
+      const o0 = rawToFloat(liveTokensOwed0Raw, dec0)
+      const o1 = rawToFloat(liveTokensOwed1Raw, dec1)
+      unclaimedFeesUsd = label0.includes('WETH')
+        ? o0 * currentEthPrice + o1
+        : o1 * currentEthPrice + o0
+    }
+
+    const p0 = rawToFloat(strategy.pendingToken0, dec0)
+    const p1 = rawToFloat(strategy.pendingToken1, dec1)
+    pendingValueUsd = label0.includes('WETH')
+      ? p0 * currentEthPrice + p1
+      : p1 * currentEthPrice + p0
+
+    currentTotalValueUsd = lpValueUsd + unclaimedFeesUsd + pendingValueUsd
+  }
+
+  const totalReturnUsd = currentTotalValueUsd - strategy.initialValueUsd - gasSpentUsd
   const totalReturnPct = strategy.initialValueUsd > 0
     ? (totalReturnUsd / strategy.initialValueUsd) * 100
     : null
 
-  return { totalReturnUsd, totalReturnPct, positionValueUsd, feesCollectedUsd, gasSpentUsd }
+  return { totalReturnUsd, totalReturnPct, currentTotalValueUsd, lpValueUsd, unclaimedFeesUsd, pendingValueUsd, gasSpentUsd }
 }
 
 // ── APY (#6) ─────────────────────────────────────────────────────────────────

@@ -48,6 +48,8 @@ export interface Strategy {
   endToken1Amount: string | null
   endValueUsd: number | null
   endEthPriceUsd: number | null
+  pendingToken0: string
+  pendingToken1: string
 }
 
 export interface StrategyStats {

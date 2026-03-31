@@ -938,6 +938,7 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
     const totalReturn = st ? computeTotalReturn(
       s, st, dec0, dec1, label0, ethPrice,
       liveToken0 ?? undefined, liveToken1 ?? undefined,
+      pos?.tokensOwed0 ?? undefined, pos?.tokensOwed1 ?? undefined,
     ) : null
     const ilResult = (s.status === 'ACTIVE' && liveToken0 && liveToken1 && ethPrice > 0)
       ? computeIL(s, dec0, dec1, label0, ethPrice, liveToken0, liveToken1) : null
@@ -1107,10 +1108,10 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
                         ) : totalReturn ? (
                           <>
                             <p className={`text-xl font-bold tracking-tight ${
-                              (totalReturn.positionValueUsd - (s.initialValueUsd ?? 0)) >= 0 ? 'text-emerald-600' : 'text-red-500'
+                              (totalReturn.currentTotalValueUsd - (s.initialValueUsd ?? 0)) >= 0 ? 'text-emerald-600' : 'text-red-500'
                             }`}>
-                              {((totalReturn.positionValueUsd - (s.initialValueUsd ?? 0)) >= 0 ? '+' : '') +
-                                formatUsd(totalReturn.positionValueUsd - (s.initialValueUsd ?? 0))}
+                              {((totalReturn.currentTotalValueUsd - (s.initialValueUsd ?? 0)) >= 0 ? '+' : '') +
+                                formatUsd(totalReturn.currentTotalValueUsd - (s.initialValueUsd ?? 0))}
                             </p>
                             <p className="text-[10px] mt-1.5 text-gray-400">deposit → withdraw</p>
                           </>
@@ -1258,7 +1259,7 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
                                     <p className="text-[10px] text-gray-400 mt-0.5">ETH = ${ethPrice.toFixed(0)} now</p>
                                   )}
                                 </div>
-                                <span className="text-xs font-bold font-mono text-gray-700">{formatUsd(totalReturn.positionValueUsd)}</span>
+                                <span className="text-xs font-bold font-mono text-gray-700">{formatUsd(totalReturn.currentTotalValueUsd)}</span>
                               </div>
                             )}
 
@@ -1270,7 +1271,7 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
                               </span>
                               <div className="text-right">
                                 <p className="text-xs font-bold text-emerald-600 font-mono">
-                                  {totalReturn ? '+' + formatUsd(totalReturn.feesCollectedUsd) : '—'}
+                                  {st ? '+' + formatUsd(st.feesCollectedUsd) : '—'}
                                 </p>
                                 {st.feesCollectedToken0 !== '0' && (
                                   <p className="text-[11px] text-gray-400 font-mono mt-0.5">
@@ -1345,12 +1346,12 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
                             )}
 
                             {/* Fees/gas ratio bar */}
-                            {totalReturn && totalReturn.feesCollectedUsd > 0 && (
+                            {st && totalReturn && st.feesCollectedUsd > 0 && (
                               <div className="h-1 rounded-full overflow-hidden flex mx-2.5 mt-1 bg-gray-100">
                                 <div className="h-full bg-gradient-to-r from-emerald-400 to-emerald-500"
-                                  style={{ width: `${Math.min((totalReturn.feesCollectedUsd / (totalReturn.feesCollectedUsd + totalReturn.gasSpentUsd)) * 100, 100)}%` }} />
+                                  style={{ width: `${Math.min((st.feesCollectedUsd / (st.feesCollectedUsd + totalReturn.gasSpentUsd)) * 100, 100)}%` }} />
                                 <div className="h-full bg-gradient-to-r from-red-400 to-red-500"
-                                  style={{ width: `${Math.min((totalReturn.gasSpentUsd / (totalReturn.feesCollectedUsd + totalReturn.gasSpentUsd)) * 100, 100)}%` }} />
+                                  style={{ width: `${Math.min((totalReturn.gasSpentUsd / (st.feesCollectedUsd + totalReturn.gasSpentUsd)) * 100, 100)}%` }} />
                               </div>
                             )}
 

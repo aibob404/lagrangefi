@@ -3,6 +3,7 @@ package fi.lagrange.services
 import io.ktor.client.*
 import io.ktor.client.call.*
 import io.ktor.client.engine.cio.*
+import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.client.request.*
 import io.ktor.http.*
@@ -140,6 +141,17 @@ class ChainClient(private val baseUrl: String) {
         }
     }
 
+    // Rebalance and close involve multiple sequential on-chain transactions — use a long timeout.
+    private val longHttp = HttpClient(CIO) {
+        install(ContentNegotiation) {
+            json(Json { ignoreUnknownKeys = true })
+        }
+        install(HttpTimeout) {
+            requestTimeoutMillis = 5 * 60 * 1_000L  // 5 minutes
+            socketTimeoutMillis  = 5 * 60 * 1_000L
+        }
+    }
+
     suspend fun getWalletBalances(walletPhrase: String): WalletBalancesResponse =
         http.post("$baseUrl/wallet/balances") {
             contentType(ContentType.Application.Json)
@@ -172,7 +184,7 @@ class ChainClient(private val baseUrl: String) {
         pendingToken0: String = "0",
         pendingToken1: String = "0",
     ): CloseResponse =
-        http.post("$baseUrl/execute/close") {
+        longHttp.post("$baseUrl/execute/close") {
             contentType(ContentType.Application.Json)
             setBody(CloseRequest(
                 idempotencyKey = idempotencyKey,
@@ -194,7 +206,7 @@ class ChainClient(private val baseUrl: String) {
         pendingToken0: String = "0",
         pendingToken1: String = "0",
     ): RebalanceResponse =
-        http.post("$baseUrl/execute/rebalance") {
+        longHttp.post("$baseUrl/execute/rebalance") {
             contentType(ContentType.Application.Json)
             setBody(RebalanceRequest(
                 idempotencyKey = idempotencyKey,

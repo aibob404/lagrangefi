@@ -6,9 +6,11 @@ import fi.lagrange.services.StrategyRecord
 import fi.lagrange.services.StrategyService
 import fi.lagrange.services.TelegramNotifier
 import fi.lagrange.services.TxRecord
+import io.ktor.client.plugins.HttpRequestTimeoutException
 import kotlinx.datetime.Clock
 import org.jetbrains.exposed.sql.and
 import org.jetbrains.exposed.sql.insert
+import org.jetbrains.exposed.sql.inList
 import org.jetbrains.exposed.sql.selectAll
 import org.jetbrains.exposed.sql.transactions.transaction
 import org.jetbrains.exposed.sql.update
@@ -35,6 +37,21 @@ class UniswapStrategy(
         val tokenId = strategy.currentTokenId
         log.debug("Checking strategy=${strategy.id} user=${strategy.userId} tokenId=$tokenId")
 
+        // Skip position polling while a rebalance is still in-flight (timed out but possibly still
+        // executing on-chain). Prevents "Invalid token ID" errors on a burned position.
+        val hasInProgress = transaction {
+            StrategyEvents.selectAll()
+                .where {
+                    (StrategyEvents.strategyId eq strategy.id) and
+                    (StrategyEvents.status inList listOf("pending", "in_progress"))
+                }
+                .any()
+        }
+        if (hasInProgress) {
+            log.warn("Strategy=${strategy.id} has a rebalance in progress — skipping tick")
+            return
+        }
+
         val position = chainClient.getPosition(tokenId)
         val poolState = chainClient.getPoolState(tokenId)
 
@@ -52,11 +69,14 @@ class UniswapStrategy(
 
         val hasPending = transaction {
             StrategyEvents.selectAll()
-                .where { (StrategyEvents.strategyId eq strategy.id) and (StrategyEvents.status eq "pending") }
+                .where {
+                    (StrategyEvents.strategyId eq strategy.id) and
+                    (StrategyEvents.status inList listOf("pending", "in_progress"))
+                }
                 .any()
         }
         if (hasPending) {
-            log.warn("Strategy=${strategy.id} already has a pending rebalance event — skipping tick to avoid duplicate execution")
+            log.warn("Strategy=${strategy.id} already has a pending/in-progress rebalance event — skipping tick to avoid duplicate execution")
             return
         }
 
@@ -155,16 +175,30 @@ class UniswapStrategy(
                 }
             }
         } catch (e: Exception) {
-            log.error("Strategy=${strategy.id} rebalance threw an exception", e)
-            telegram.sendAlert("[${strategy.name}] Rebalance ERROR: ${e.message}")
-            transaction {
-                StrategyEvents.update({ StrategyEvents.id eq eventId }) {
-                    it[status] = "failed"
-                    it[errorMessage] = e.message
-                    it[completedAt] = Clock.System.now()
+            val isTimeout = e is HttpRequestTimeoutException
+            if (isTimeout) {
+                // Rebalance timed out: the chain service may still be executing on-chain.
+                // Mark as in_progress so subsequent ticks skip position polling until resolved.
+                log.error("Strategy=${strategy.id} rebalance timed out — chain service may still be running", e)
+                telegram.sendAlert("[${strategy.name}] Rebalance timed out — still executing on-chain. Manual check required.")
+                transaction {
+                    StrategyEvents.update({ StrategyEvents.id eq eventId }) {
+                        it[status] = "in_progress"
+                        it[errorMessage] = e.message
+                    }
                 }
+            } else {
+                log.error("Strategy=${strategy.id} rebalance threw an exception", e)
+                telegram.sendAlert("[${strategy.name}] Rebalance ERROR: ${e.message}")
+                transaction {
+                    StrategyEvents.update({ StrategyEvents.id eq eventId }) {
+                        it[status] = "failed"
+                        it[errorMessage] = e.message
+                        it[completedAt] = Clock.System.now()
+                    }
+                }
+                throw e
             }
-            throw e
         }
     }
 

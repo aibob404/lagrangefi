@@ -9,7 +9,7 @@ import {
 import type { Strategy, StrategyStats, StrategyEvent, Position, PoolState } from '../types'
 import { useAuth } from '../context/AuthContext'
 import {
-  computeIL, computeTotalReturn, computeAPY, computeBreakEven,
+  computeCompareToHold, computeTotalReturn, computeAPY, computeBreakEven,
   computeTokenRatio, computeRebalanceProfit, rawToFloat, depositValueAtOpen,
 } from '../finance'
 
@@ -940,8 +940,8 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
       liveToken0 ?? undefined, liveToken1 ?? undefined,
       pos?.tokensOwed0 ?? undefined, pos?.tokensOwed1 ?? undefined,
     ) : null
-    const ilResult = (s.status === 'ACTIVE' && liveToken0 && liveToken1 && ethPrice > 0)
-      ? computeIL(s, dec0, dec1, label0, ethPrice, liveToken0, liveToken1) : null
+    const compareToHold = (s.status === 'ACTIVE' && totalReturn && ethPrice > 0)
+      ? computeCompareToHold(s, dec0, dec1, label0, ethPrice, totalReturn.currentTotalValueUsd) : null
     const days = daysRunning(s.createdAt)
     const apy = (totalReturn?.totalReturnUsd != null && s.initialValueUsd && days > 0)
       ? computeAPY(totalReturn.totalReturnUsd, s.initialValueUsd, days) : null
@@ -1090,16 +1090,16 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
                       <div className="relative px-5 py-4 border-b sm:border-b-0 sm:border-r border-white/50">
                         <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-orange-400/70 to-amber-300/50" />
                         <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2.5">
-                          {s.status === 'ACTIVE' ? 'Imperm. Loss' : 'Position Δ'}
+                          {s.status === 'ACTIVE' ? 'Compare to Hold' : 'Position Δ'}
                         </p>
                         {s.status === 'ACTIVE' ? (
-                          ilResult ? (
+                          compareToHold ? (
                             <>
-                              <p className={`text-xl font-bold tracking-tight ${ilResult.ilUsd >= 0 ? 'text-emerald-600' : 'text-orange-500'}`}>
-                                {ilResult.ilUsd >= 0 ? '+' : ''}{formatUsd(ilResult.ilUsd)}
+                              <p className={`text-xl font-bold tracking-tight ${compareToHold.compareUsd < 0 ? 'text-emerald-600' : 'text-orange-500'}`}>
+                                {compareToHold.compareUsd >= 0 ? '+' : ''}{formatUsd(compareToHold.compareUsd)}
                               </p>
-                              <p className={`text-[10px] mt-1.5 font-semibold ${ilResult.ilUsd >= 0 ? 'text-emerald-500' : 'text-orange-400'}`}>
-                                {ilResult.ilPct.toFixed(2)}% vs holding
+                              <p className={`text-[10px] mt-1.5 font-semibold ${compareToHold.compareUsd < 0 ? 'text-emerald-500' : 'text-orange-400'}`}>
+                                {compareToHold.comparePct.toFixed(2)}% {compareToHold.compareUsd < 0 ? 'LP ahead' : 'HODL ahead'}
                               </p>
                             </>
                           ) : (
@@ -1320,26 +1320,26 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
                               </div>
                             </div>
 
-                            {/* IL row (active only) */}
-                            {s.status === 'ACTIVE' && ilResult && (
+                            {/* Compare to Hold row (active only) */}
+                            {s.status === 'ACTIVE' && compareToHold && (
                               <div className={`flex justify-between items-start px-2.5 py-1.5 rounded-lg border ${
-                                ilResult.ilUsd >= 0
+                                compareToHold.compareUsd < 0
                                   ? 'bg-emerald-50/40 border-emerald-100/50'
                                   : 'bg-orange-50/40 border-orange-100/50'
                               }`}>
                                 <div>
-                                  <span className={`text-xs font-medium flex items-center gap-1.5 mt-0.5 ${ilResult.ilUsd >= 0 ? 'text-emerald-700' : 'text-orange-600'}`}>
-                                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${ilResult.ilUsd >= 0 ? 'bg-emerald-400' : 'bg-orange-400'}`} />
-                                    Imperm. loss
+                                  <span className={`text-xs font-medium flex items-center gap-1.5 mt-0.5 ${compareToHold.compareUsd < 0 ? 'text-emerald-700' : 'text-orange-600'}`}>
+                                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${compareToHold.compareUsd < 0 ? 'bg-emerald-400' : 'bg-orange-400'}`} />
+                                    Compare to hold
                                   </span>
                                   <p className="text-[10px] text-gray-400 mt-0.5 ml-3">vs holding since open</p>
                                 </div>
                                 <div className="text-right">
-                                  <p className={`text-xs font-bold font-mono ${ilResult.ilUsd >= 0 ? 'text-emerald-600' : 'text-orange-500'}`}>
-                                    {ilResult.ilUsd >= 0 ? '+' : ''}{formatUsd(ilResult.ilUsd)}
+                                  <p className={`text-xs font-bold font-mono ${compareToHold.compareUsd < 0 ? 'text-emerald-600' : 'text-orange-500'}`}>
+                                    {compareToHold.compareUsd >= 0 ? '+' : ''}{formatUsd(compareToHold.compareUsd)}
                                   </p>
-                                  <p className={`text-[10px] font-semibold mt-0.5 ${ilResult.ilUsd >= 0 ? 'text-emerald-500' : 'text-orange-400'}`}>
-                                    {ilResult.ilPct.toFixed(2)}%
+                                  <p className={`text-[10px] font-semibold mt-0.5 ${compareToHold.compareUsd < 0 ? 'text-emerald-500' : 'text-orange-400'}`}>
+                                    {compareToHold.comparePct.toFixed(2)}%
                                   </p>
                                 </div>
                               </div>

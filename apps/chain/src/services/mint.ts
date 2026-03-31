@@ -83,7 +83,14 @@ export async function mintPosition(req: MintRequest): Promise<MintResult> {
     return receipt
   }
 
-  // 1. Wrap ETH → WETH if requested
+  // 1. Snapshot pre-existing balances before any operations so we never touch
+  //    funds that belong to other strategies or pre-existing wallet dust.
+  const [prevBalance0, prevBalance1] = await Promise.all([
+    publicClient.readContract({ address: TOKEN0, abi: ERC20_ABI, functionName: 'balanceOf', args: [account.address] }),
+    publicClient.readContract({ address: TOKEN1, abi: ERC20_ABI, functionName: 'balanceOf', args: [account.address] }),
+  ])
+
+  // 2. Wrap ETH → WETH if requested
   const ethAmt = parseFloat(req.ethAmount)
   if (!isNaN(ethAmt) && ethAmt > 0) {
     const wrapTx = await walletClient.writeContract({
@@ -95,28 +102,24 @@ export async function mintPosition(req: MintRequest): Promise<MintResult> {
     await trackTx(wrapTx, 'WRAP')
   }
 
-  // 2. Transfer USDC into wallet (already there — user must have sent it to the wallet)
-  // We use the full wallet balance of both tokens for the position
-
   // 3. Get pool state for swap calculation
   const poolState = await getPoolStateByPair(TOKEN0, TOKEN1, req.feeTier)
   const sqrtPriceX96 = BigInt(poolState.sqrtPriceX96)
 
-  // 4. Fetch decimals + current balances
+  // 4. Fetch token decimals
   const [decimals0, decimals1] = await Promise.all([
     getTokenDecimals(TOKEN0),
     getTokenDecimals(TOKEN1),
   ])
 
-  const [balance0, balance1] = await Promise.all([
-    publicClient.readContract({ address: TOKEN0, abi: ERC20_ABI, functionName: 'balanceOf', args: [account.address] }),
-    publicClient.readContract({ address: TOKEN1, abi: ERC20_ABI, functionName: 'balanceOf', args: [account.address] }),
-  ])
+  // 5. Calculate and execute optimal swap using only the intended deposit amounts,
+  //    not the full wallet balance — so pre-existing funds are never touched.
+  const intended0 = parseEther(req.ethAmount)
+  const intended1 = parseUnits(req.usdcAmount, decimals1)
 
-  // 5. Calculate and execute optimal swap if needed
   const swap = calculateSwapAmount({
-    balance0,
-    balance1,
+    balance0: intended0,
+    balance1: intended1,
     decimals0,
     decimals1,
     sqrtPriceX96,
@@ -139,11 +142,14 @@ export async function mintPosition(req: MintRequest): Promise<MintResult> {
     await trackTx(swapTx, 'SWAP')
   }
 
-  // 6. Re-fetch balances after swap
-  const [finalBalance0, finalBalance1] = await Promise.all([
+  // 6. Re-fetch balances and compute only "our" amounts (delta vs pre-existing snapshot).
+  //    This correctly accounts for the swap outcome without touching pre-existing funds.
+  const [postBalance0, postBalance1] = await Promise.all([
     publicClient.readContract({ address: TOKEN0, abi: ERC20_ABI, functionName: 'balanceOf', args: [account.address] }),
     publicClient.readContract({ address: TOKEN1, abi: ERC20_ABI, functionName: 'balanceOf', args: [account.address] }),
   ])
+  const finalBalance0 = postBalance0 > prevBalance0 ? postBalance0 - prevBalance0 : 0n
+  const finalBalance1 = postBalance1 > prevBalance1 ? postBalance1 - prevBalance1 : 0n
 
   // 7. Approve position manager for both tokens — sequential to avoid nonce collision
   const approveTx0 = await walletClient.writeContract({ address: TOKEN0, abi: ERC20_ABI, functionName: 'approve', args: [POSITION_MANAGER, finalBalance0] })

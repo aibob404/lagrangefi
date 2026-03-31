@@ -184,7 +184,13 @@ fun Application.configureRouting(
                             ?.divide(java.math.BigDecimal.TEN.pow(poolState.decimals0), poolState.decimals0, java.math.RoundingMode.HALF_UP)?.toDouble() ?: 0.0
                         val t1 = mintResult.amount1.toBigIntegerOrNull()?.toBigDecimal()
                             ?.divide(java.math.BigDecimal.TEN.pow(poolState.decimals1), poolState.decimals1, java.math.RoundingMode.HALF_UP)?.toDouble() ?: 0.0
-                        t0 * ethPrice + t1
+                        // Include leftover tokens that didn't fit into the LP — they are part of
+                        // the user's true initial contribution and must be in the baseline.
+                        val pending0 = (mintResult.leftoverToken0 ?: "0").toBigIntegerOrNull()?.toBigDecimal()
+                            ?.divide(java.math.BigDecimal.TEN.pow(poolState.decimals0), poolState.decimals0, java.math.RoundingMode.HALF_UP)?.toDouble() ?: 0.0
+                        val pending1 = (mintResult.leftoverToken1 ?: "0").toBigIntegerOrNull()?.toBigDecimal()
+                            ?.divide(java.math.BigDecimal.TEN.pow(poolState.decimals1), poolState.decimals1, java.math.RoundingMode.HALF_UP)?.toDouble() ?: 0.0
+                        (t0 + pending0) * ethPrice + (t1 + pending1)
                     } else {
                         (req.ethAmount.toDoubleOrNull() ?: 0.0) * ethPrice +
                             (req.usdcAmount.toDoubleOrNull() ?: 0.0)

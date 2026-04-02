@@ -1,6 +1,6 @@
 import { createWalletClientForKey, publicClient } from '../config.js'
 import { calculateSwapAmount, executeSwap, getTokenDecimals } from './swap.js'
-import type { RebalanceRequest, RebalanceResult, FeesCollected } from '@lagrangefi/shared'
+import type { RebalanceRequest, RebalanceResult, FeesCollected, TxDetail } from '@lagrangefi/shared'
 
 // Uniswap v3 NonfungiblePositionManager on Arbitrum
 const POSITION_MANAGER = '0xC36442b4a4522E871399CD717aBDD847Ab11FE88' as const
@@ -42,6 +42,13 @@ const POSITION_MANAGER_ABI = [
       { name: 'amount0', type: 'uint256' },
       { name: 'amount1', type: 'uint256' },
     ],
+  },
+  {
+    name: 'burn',
+    type: 'function',
+    stateMutability: 'payable',
+    inputs: [{ name: 'tokenId', type: 'uint256' }],
+    outputs: [],
   },
   {
     name: 'mint',
@@ -113,15 +120,10 @@ const ERC20_ABI = [
 ] as const
 
 // keccak256("Collect(uint256,address,uint256,uint256)")
-const COLLECT_EVENT_TOPIC = '0x40d0efd1a53d60ecbf40971b9daf7dc90178c3afa95c9f56a5c71bf52e133e41' as const
+const COLLECT_EVENT_TOPIC = '0x40d0efd1a53d60ecbf40971b9daf7dc90178c3aadc7aab1765632738fa8b8f01' as const
 
 const MAX_UINT128 = 2n ** 128n - 1n
 const DEADLINE_BUFFER = 300n // 5 minutes
-
-/** Sum gasUsed * effectiveGasPrice across all receipts, return total wei as bigint */
-function totalGasWei(receipts: Array<{ gasUsed: bigint; effectiveGasPrice: bigint }>): bigint {
-  return receipts.reduce((acc, r) => acc + r.gasUsed * r.effectiveGasPrice, 0n)
-}
 
 /** Parse Collect event from receipt to extract total collected amounts (fees + principal) */
 function parseTotalCollected(
@@ -150,9 +152,13 @@ export async function rebalance(req: RebalanceRequest): Promise<RebalanceResult>
   const tokenId = BigInt(req.tokenId)
   const deadline = BigInt(Math.floor(Date.now() / 1000)) + DEADLINE_BUFFER
   const account = walletClient.account!
-  const txHashes: string[] = []
-  const txSteps: string[] = []
-  const receipts: Array<{ gasUsed: bigint; effectiveGasPrice: bigint }> = []
+  const txDetails: TxDetail[] = []
+
+  const trackTx = async (hash: `0x${string}`, action: string) => {
+    const receipt = await publicClient.waitForTransactionReceipt({ hash })
+    txDetails.push({ txHash: hash, action, gasUsedWei: Number(receipt.gasUsed * receipt.effectiveGasPrice) })
+    return receipt
+  }
 
   // 1. Fetch current position
   const position = await publicClient.readContract({
@@ -164,6 +170,24 @@ export async function rebalance(req: RebalanceRequest): Promise<RebalanceResult>
   const liquidity = position[7]
   const tokensOwed0 = position[10]
   const tokensOwed1 = position[11]
+
+  // Extract token addresses early — needed for pre-collect balance snapshot
+  const token0 = position[2] as `0x${string}`
+  const token1 = position[3] as `0x${string}`
+  const fee = position[4]
+
+  // Pending tokens from the previous mint cycle that should be folded into this rebalance
+  const pending0 = BigInt(req.pendingToken0 ?? '0')
+  const pending1 = BigInt(req.pendingToken1 ?? '0')
+
+  // Snapshot wallet balance before collect so we can isolate true dust
+  // (anything in the wallet that is NOT our tracked pending from the last cycle).
+  const [preCollectBalance0, preCollectBalance1] = await Promise.all([
+    publicClient.readContract({ address: token0, abi: ERC20_ABI, functionName: 'balanceOf', args: [account.address] }),
+    publicClient.readContract({ address: token1, abi: ERC20_ABI, functionName: 'balanceOf', args: [account.address] }),
+  ])
+  const trueDust0 = preCollectBalance0 > pending0 ? preCollectBalance0 - pending0 : 0n
+  const trueDust1 = preCollectBalance1 > pending1 ? preCollectBalance1 - pending1 : 0n
 
   let principal0 = 0n
   let principal1 = 0n
@@ -198,10 +222,7 @@ export async function rebalance(req: RebalanceRequest): Promise<RebalanceResult>
       functionName: 'decreaseLiquidity',
       args: [decreaseParams],
     })
-    const decreaseReceipt = await publicClient.waitForTransactionReceipt({ hash: decreaseTx })
-    txHashes.push(decreaseTx)
-    txSteps.push('Remove Liquidity')
-    receipts.push(decreaseReceipt)
+    const decreaseReceipt = await trackTx(decreaseTx, 'REMOVE_LIQUIDITY')
     if (decreaseReceipt.status === 'reverted') {
       throw new Error(`decreaseLiquidity reverted (tx: ${decreaseTx})`)
     }
@@ -213,6 +234,7 @@ export async function rebalance(req: RebalanceRequest): Promise<RebalanceResult>
   // From this point on, liquidity has been removed. If anything below fails, we must collect
   // any stranded tokens back to the wallet so they are never left in the contract.
   let feesCollected: FeesCollected | undefined
+  let collectedFromPosition: { amount0: bigint; amount1: bigint } | undefined
 
   try {
 
@@ -229,25 +251,29 @@ export async function rebalance(req: RebalanceRequest): Promise<RebalanceResult>
         amount1Max: MAX_UINT128,
       }],
     })
-    const collectReceipt = await publicClient.waitForTransactionReceipt({ hash: collectTx })
-    txHashes.push(collectTx)
-    txSteps.push('Collect Fees')
-    receipts.push(collectReceipt)
+    const collectReceipt = await trackTx(collectTx, 'COLLECT_FEES')
 
     // Parse total collected from Collect event, then subtract principal to get LP fees only
     const totalCollected = parseTotalCollected(collectReceipt)
+    collectedFromPosition = totalCollected
     feesCollected = totalCollected
       ? {
           amount0: (totalCollected.amount0 > principal0 ? totalCollected.amount0 - principal0 : 0n).toString(),
           amount1: (totalCollected.amount1 > principal1 ? totalCollected.amount1 - principal1 : 0n).toString(),
         }
       : undefined
+
+    // Burn the old NFT now that liquidity and tokens are fully withdrawn
+    const burnTx = await walletClient.writeContract({
+      address: POSITION_MANAGER,
+      abi: POSITION_MANAGER_ABI,
+      functionName: 'burn',
+      args: [tokenId],
+    })
+    await trackTx(burnTx, 'BURN')
   }
 
-  // 4. Extract position token addresses and fee
-  const token0 = position[2] as `0x${string}`
-  const token1 = position[3] as `0x${string}`
-  const fee = position[4]
+  // 4. (token0, token1, fee already extracted above)
 
   // 5. Get token decimals and pool state
   const [decimals0, decimals1, poolState] = await Promise.all([
@@ -278,17 +304,18 @@ export async function rebalance(req: RebalanceRequest): Promise<RebalanceResult>
     }),
   ])
 
-  // 6. Fetch balances after collection — this is the start position value (liquidity + fees)
-  const [balance0, balance1] = await Promise.all([
-    publicClient.readContract({ address: token0, abi: ERC20_ABI, functionName: 'balanceOf', args: [account.address] }),
-    publicClient.readContract({ address: token1, abi: ERC20_ABI, functionName: 'balanceOf', args: [account.address] }),
-  ])
-  const positionToken0Start = balance0.toString()
-  const positionToken1Start = balance1.toString()
+  // 6. Compute working capital = collected from position + pending from last cycle.
+  //    This excludes true wallet dust (anything beyond our tracked pending).
+  const totalToUse0 = (collectedFromPosition?.amount0 ?? 0n) + pending0
+  const totalToUse1 = (collectedFromPosition?.amount1 ?? 0n) + pending1
+
+  // positionToken0Start = everything entering the new position (collected + pending)
+  const positionToken0Start = totalToUse0.toString()
+  const positionToken1Start = totalToUse1.toString()
 
   const swap = calculateSwapAmount({
-    balance0,
-    balance1,
+    balance0: totalToUse0,
+    balance1: totalToUse1,
     decimals0,
     decimals1,
     sqrtPriceX96: poolState[0],
@@ -308,26 +335,23 @@ export async function rebalance(req: RebalanceRequest): Promise<RebalanceResult>
       deadline,
       walletClient,
     })
-    const swapReceipt = await publicClient.waitForTransactionReceipt({ hash: swapTx })
-    txHashes.push(swapTx)
-    txSteps.push('Swap')
-    receipts.push(swapReceipt)
+    await trackTx(swapTx, 'SWAP')
   }
 
-  // Re-fetch balances after the swap
-  const [finalBalance0, finalBalance1] = await Promise.all([
+  // Re-fetch balances after the swap, then subtract trueDust to get usable amounts only.
+  // trueDust = whatever was in the wallet before we started that isn't our pending capital.
+  const [postSwapBalance0, postSwapBalance1] = await Promise.all([
     publicClient.readContract({ address: token0, abi: ERC20_ABI, functionName: 'balanceOf', args: [account.address] }),
     publicClient.readContract({ address: token1, abi: ERC20_ABI, functionName: 'balanceOf', args: [account.address] }),
   ])
+  const finalUsable0 = postSwapBalance0 > trueDust0 ? postSwapBalance0 - trueDust0 : 0n
+  const finalUsable1 = postSwapBalance1 > trueDust1 ? postSwapBalance1 - trueDust1 : 0n
 
-  // 8. Approve position manager to spend final token balances — sequential to avoid nonce collision
-  const approveTx0 = await walletClient.writeContract({ address: token0, abi: ERC20_ABI, functionName: 'approve', args: [POSITION_MANAGER, finalBalance0] })
-  const approveReceipt0 = await publicClient.waitForTransactionReceipt({ hash: approveTx0 })
-  const approveTx1 = await walletClient.writeContract({ address: token1, abi: ERC20_ABI, functionName: 'approve', args: [POSITION_MANAGER, finalBalance1] })
-  const approveReceipt1 = await publicClient.waitForTransactionReceipt({ hash: approveTx1 })
-  txHashes.push(approveTx0, approveTx1)
-  txSteps.push('Approve WETH', 'Approve USDC')
-  receipts.push(approveReceipt0, approveReceipt1)
+  // 8. Approve position manager for usable amounts only — sequential to avoid nonce collision
+  const approveTx0 = await walletClient.writeContract({ address: token0, abi: ERC20_ABI, functionName: 'approve', args: [POSITION_MANAGER, finalUsable0] })
+  await trackTx(approveTx0, 'APPROVE')
+  const approveTx1 = await walletClient.writeContract({ address: token1, abi: ERC20_ABI, functionName: 'approve', args: [POSITION_MANAGER, finalUsable1] })
+  await trackTx(approveTx1, 'APPROVE')
 
   // 9. Mint new position at new range
   const mintTx = await walletClient.writeContract({
@@ -340,18 +364,15 @@ export async function rebalance(req: RebalanceRequest): Promise<RebalanceResult>
       fee,
       tickLower: req.newTickLower,
       tickUpper: req.newTickUpper,
-      amount0Desired: finalBalance0,
-      amount1Desired: finalBalance1,
+      amount0Desired: finalUsable0,
+      amount1Desired: finalUsable1,
       amount0Min: 0n,
       amount1Min: 0n,
       recipient: account.address,
       deadline,
     }],
   })
-  const mintReceipt = await publicClient.waitForTransactionReceipt({ hash: mintTx })
-  txHashes.push(mintTx)
-  txSteps.push('Mint Position')
-  receipts.push(mintReceipt)
+  const mintReceipt = await trackTx(mintTx, 'MINT')
 
   if (mintReceipt.status === 'reverted') {
     throw new Error(`mint reverted (tx: ${mintTx})`)
@@ -383,10 +404,17 @@ export async function rebalance(req: RebalanceRequest): Promise<RebalanceResult>
     positionToken1End = BigInt('0x' + data.slice(128, 192)).toString()  // amount1
   }
 
-  const gasUsedWei = totalGasWei(receipts).toString()
+  const txHashes = txDetails.map(d => d.txHash)
+  const gasUsedWei = txDetails.reduce((acc, d) => acc + BigInt(d.gasUsedWei), 0n).toString()
+
+  // Compute leftover — tokens that did not fit into the new LP position
+  const deposited0 = positionToken0End ? BigInt(positionToken0End) : 0n
+  const deposited1 = positionToken1End ? BigInt(positionToken1End) : 0n
+  const leftoverToken0 = (finalUsable0 > deposited0 ? finalUsable0 - deposited0 : 0n).toString()
+  const leftoverToken1 = (finalUsable1 > deposited1 ? finalUsable1 - deposited1 : 0n).toString()
 
   const isRecovery = liquidity === 0n
-  return { success: true, txHashes, txSteps, newTokenId, feesCollected, gasUsedWei, positionToken0Start, positionToken1Start, positionToken0End, positionToken1End, isRecovery }
+  return { success: true, txHashes, txDetails, newTokenId, feesCollected, gasUsedWei, positionToken0Start, positionToken1Start, positionToken0End, positionToken1End, isRecovery, leftoverToken0, leftoverToken1 }
 
   } catch (err) {
     // Recovery: collect tokens back to wallet so they are not stranded in the position manager
@@ -402,15 +430,14 @@ export async function rebalance(req: RebalanceRequest): Promise<RebalanceResult>
           amount1Max: MAX_UINT128,
         }],
       })
-      await publicClient.waitForTransactionReceipt({ hash: recoverTx })
-      txHashes.push(recoverTx)
+      await trackTx(recoverTx, 'COLLECT_FEES')
     } catch (collectErr) {
       // Recovery failed — include both errors in the response
       const msg = err instanceof Error ? err.message : String(err)
       const collectMsg = collectErr instanceof Error ? collectErr.message : String(collectErr)
-      return { success: false, txHashes, error: `${msg}; recovery collect also failed: ${collectMsg}` }
+      return { success: false, txHashes: txDetails.map(d => d.txHash), txDetails, error: `${msg}; recovery collect also failed: ${collectMsg}` }
     }
     const msg = err instanceof Error ? err.message : String(err)
-    return { success: false, txHashes, error: `${msg}; tokens recovered to wallet` }
+    return { success: false, txHashes: txDetails.map(d => d.txHash), txDetails, error: `${msg}; tokens recovered to wallet` }
   }
 }

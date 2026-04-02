@@ -33,31 +33,8 @@ class StrategyScheduler(
     fun loadAndStartAll() {
         val strategies = transaction {
             Strategies.selectAll()
-                .where { Strategies.status eq "active" }
-                .map { row ->
-                    StrategyRecord(
-                        id = row[Strategies.id],
-                        userId = row[Strategies.userId],
-                        name = row[Strategies.name],
-                        currentTokenId = row[Strategies.currentTokenId],
-                        token0 = row[Strategies.token0],
-                        token1 = row[Strategies.token1],
-                        fee = row[Strategies.fee],
-                        token0Decimals = row[Strategies.token0Decimals],
-                        token1Decimals = row[Strategies.token1Decimals],
-                        rangePercent = row[Strategies.rangePercent],
-                        slippageTolerance = row[Strategies.slippageTolerance],
-                        pollIntervalSeconds = row[Strategies.pollIntervalSeconds],
-                        status = row[Strategies.status],
-                        createdAt = row[Strategies.createdAt].toString(),
-                        stoppedAt = row[Strategies.stoppedAt]?.toString(),
-                        initialToken0Amount = row[Strategies.initialToken0Amount],
-                        initialToken1Amount = row[Strategies.initialToken1Amount],
-                        initialValueUsd = row[Strategies.initialValueUsd],
-                        openEthPriceUsd = row[Strategies.openEthPriceUsd],
-                        openTxHashes = row[Strategies.openTxHashes],
-                    )
-                }
+                .where { Strategies.status eq "ACTIVE" }
+                .map { row -> rowToRecord(row) }
         }
         strategies.forEach { start(it) }
         log.info("Loaded ${strategies.size} active strategies")
@@ -88,38 +65,13 @@ class StrategyScheduler(
     }
 
     private suspend fun executeOnce(strategyId: Int) {
-        // Re-load strategy state from DB each tick (picks up tokenId changes and status updates)
         val strategy = transaction {
             Strategies.selectAll()
-                .where { (Strategies.id eq strategyId) and (Strategies.status eq "active") }
-                .firstOrNull()?.let { row ->
-                    StrategyRecord(
-                        id = row[Strategies.id],
-                        userId = row[Strategies.userId],
-                        name = row[Strategies.name],
-                        currentTokenId = row[Strategies.currentTokenId],
-                        token0 = row[Strategies.token0],
-                        token1 = row[Strategies.token1],
-                        fee = row[Strategies.fee],
-                        token0Decimals = row[Strategies.token0Decimals],
-                        token1Decimals = row[Strategies.token1Decimals],
-                        rangePercent = row[Strategies.rangePercent],
-                        slippageTolerance = row[Strategies.slippageTolerance],
-                        pollIntervalSeconds = row[Strategies.pollIntervalSeconds],
-                        status = row[Strategies.status],
-                        createdAt = row[Strategies.createdAt].toString(),
-                        stoppedAt = row[Strategies.stoppedAt]?.toString(),
-                        initialToken0Amount = row[Strategies.initialToken0Amount],
-                        initialToken1Amount = row[Strategies.initialToken1Amount],
-                        initialValueUsd = row[Strategies.initialValueUsd],
-                        openEthPriceUsd = row[Strategies.openEthPriceUsd],
-                        openTxHashes = row[Strategies.openTxHashes],
-                    )
-                }
+                .where { (Strategies.id eq strategyId) and (Strategies.status eq "ACTIVE") }
+                .firstOrNull()?.let { row -> rowToRecord(row) }
         }
 
         if (strategy == null) {
-            // Strategy was stopped externally — cancel the timer
             stop(strategyId)
             return
         }
@@ -132,4 +84,33 @@ class StrategyScheduler(
 
         executor.execute(strategy, walletPhrase)
     }
+
+    private fun rowToRecord(row: org.jetbrains.exposed.sql.ResultRow) = StrategyRecord(
+        id = row[Strategies.id],
+        userId = row[Strategies.userId],
+        name = row[Strategies.name],
+        currentTokenId = row[Strategies.currentTokenId],
+        token0 = row[Strategies.token0],
+        token1 = row[Strategies.token1],
+        fee = row[Strategies.fee],
+        token0Decimals = row[Strategies.token0Decimals],
+        token1Decimals = row[Strategies.token1Decimals],
+        rangePercent = row[Strategies.rangePercent],
+        slippageTolerance = row[Strategies.slippageTolerance],
+        pollIntervalSeconds = row[Strategies.pollIntervalSeconds],
+        status = row[Strategies.status],
+        createdAt = row[Strategies.createdAt].toString(),
+        stoppedAt = row[Strategies.stoppedAt]?.toString(),
+        stopReason = row[Strategies.stopReason],
+        initialToken0Amount = row[Strategies.initialToken0Amount],
+        initialToken1Amount = row[Strategies.initialToken1Amount],
+        initialValueUsd = row[Strategies.initialValueUsd]?.toDouble(),
+        openEthPriceUsd = row[Strategies.openEthPriceUsd]?.toDouble(),
+        endToken0Amount = row[Strategies.endToken0Amount],
+        endToken1Amount = row[Strategies.endToken1Amount],
+        endValueUsd = row[Strategies.endValueUsd]?.toDouble(),
+        endEthPriceUsd = row[Strategies.endEthPriceUsd]?.toDouble(),
+        pendingToken0 = row[Strategies.pendingToken0],
+        pendingToken1 = row[Strategies.pendingToken1],
+    )
 }

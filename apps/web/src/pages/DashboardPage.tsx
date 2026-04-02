@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts'
-import type { Position, PoolState, RebalanceEvent, Strategy, StrategyStats } from '../types'
+import type { Position, PoolState, StrategyEvent, Strategy, StrategyStats } from '../types'
 import { fetchPosition, fetchPoolState, fetchRebalances, fetchStrategies, fetchStrategyStats } from '../api'
 import { useAuth } from '../context/AuthContext'
 
@@ -42,7 +42,7 @@ function computeNetFees(stats: StrategyStats, ethPrice: number, _token0: string,
 
   const feesToken0Eth = Number(BigInt(stats.feesCollectedToken0)) / 1e18  // WETH
   const feesToken1Usd = Number(BigInt(stats.feesCollectedToken1)) / 1e6   // USDC
-  const gasEth = Number(BigInt(stats.gasCostWei)) / 1e18
+  const gasEth = stats.gasCostWei / 1e18
 
   const feesUsd = feesToken1Usd + feesToken0Eth * ethPrice
   const gasUsd = gasEth * ethPrice
@@ -179,7 +179,7 @@ export default function DashboardPage() {
 
   const [position,   setPosition]   = useState<Position | null>(null)
   const [poolState,  setPoolState]  = useState<PoolState | null>(null)
-  const [rebalances, setRebalances] = useState<RebalanceEvent[]>([])
+  const [rebalances, setRebalances] = useState<StrategyEvent[]>([])
   const [strategy,   setStrategy]   = useState<Strategy | null>(null)
   const [stats,      setStats]      = useState<StrategyStats | null>(null)
 
@@ -193,7 +193,7 @@ export default function DashboardPage() {
     try {
       // Find active strategy first
       const strategies = await fetchStrategies()
-      const active = strategies.find(s => s.status === 'active') ?? null
+      const active = strategies.find(s => s.status === 'ACTIVE') ?? null
       setStrategy(active)
 
       if (!active) {
@@ -239,8 +239,9 @@ export default function DashboardPage() {
     : null
   const unclaimedFees = position ? computeUnclaimedFees(position, ethPrice) : null
 
-  const successCount = rebalances.filter(r => r.status === 'success').length
-  const failedCount  = rebalances.filter(r => r.status === 'failed').length
+  const rebalanceEvents = rebalances.filter(r => r.action === 'REBALANCE')
+  const successCount = rebalanceEvents.filter(r => r.status === 'success').length
+  const failedCount  = rebalanceEvents.filter(r => r.status === 'failed').length
   const totalFromStats = stats?.totalRebalances ?? (successCount + failedCount)
   const successRate = totalFromStats > 0
     ? Math.round((successCount / Math.max(successCount + failedCount, 1)) * 100)
@@ -449,7 +450,7 @@ export default function DashboardPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
-                {rebalances.slice(0, 10).map(r => (
+                {rebalanceEvents.slice(0, 10).map(r => (
                   <tr key={r.id} className="hover:bg-white/30 transition-colors">
                     <td className="py-2.5 text-gray-500 font-mono text-xs whitespace-nowrap">
                       {new Date(r.triggeredAt).toLocaleString()}
@@ -460,18 +461,18 @@ export default function DashboardPage() {
                       </span>
                     </td>
                     <td className="py-2.5 text-gray-600 font-mono text-xs">
-                      {r.newTickLower != null && poolState
-                        ? `$${formatPrice(tickToPrice(r.newTickLower, poolState.decimals0, poolState.decimals1))} → $${formatPrice(tickToPrice(r.newTickUpper!, poolState.decimals0, poolState.decimals1))}`
+                      {r.rebalanceDetails?.newTickLower != null && poolState
+                        ? `$${formatPrice(tickToPrice(r.rebalanceDetails.newTickLower, poolState.decimals0, poolState.decimals1))} → $${formatPrice(tickToPrice(r.rebalanceDetails.newTickUpper!, poolState.decimals0, poolState.decimals1))}`
                         : <span className="text-gray-400">{r.errorMessage ?? '—'}</span>}
                     </td>
                     <td className="py-2.5 text-xs">
-                      {r.txHashes
-                        ? JSON.parse(r.txHashes).slice(0, 1).map((h: string) => (
-                          <a key={h} href={`https://arbiscan.io/tx/${h}`} target="_blank" rel="noopener noreferrer"
+                      {r.transactions?.[0]?.txHash
+                        ? (
+                          <a href={`https://arbiscan.io/tx/${r.transactions[0].txHash}`} target="_blank" rel="noopener noreferrer"
                             className="text-blue-600 hover:text-blue-700 font-mono underline underline-offset-2">
-                            {shortHash(h)}
+                            {shortHash(r.transactions[0].txHash)}
                           </a>
-                        ))
+                        )
                         : <span className="text-gray-400">—</span>}
                     </td>
                   </tr>

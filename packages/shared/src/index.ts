@@ -33,6 +33,9 @@ export interface RebalanceRequest {
   slippageTolerance: number // e.g. 0.005 = 0.5%
   /** Per-request wallet: private key (0x...) or BIP39 mnemonic phrase */
   walletPrivateKey?: string
+  /** Leftover tokens from the previous mint cycle that should be folded into this rebalance */
+  pendingToken0?: string
+  pendingToken1?: string
 }
 
 export interface FeesCollected {
@@ -40,9 +43,16 @@ export interface FeesCollected {
   amount1: string
 }
 
+export interface TxDetail {
+  txHash: string
+  action: string
+  gasUsedWei: number
+}
+
 export interface RebalanceResult {
   success: boolean
   txHashes: string[]
+  txDetails?: TxDetail[]
   /** Labels for each txHash entry (1:1 mapping) */
   txSteps?: string[]
   newTokenId?: string
@@ -59,6 +69,9 @@ export interface RebalanceResult {
   positionToken1End?: string
   /** True when rebalance ran in recovery mode (position had no liquidity on entry) */
   isRecovery?: boolean
+  /** Leftover tokens that did not fit into the new LP position — carry into the next rebalance */
+  leftoverToken0?: string
+  leftoverToken1?: string
 }
 
 export interface MintRequest {
@@ -76,9 +89,16 @@ export interface MintResult {
   success: boolean
   tokenId?: string
   txHashes: string[]
+  txDetails?: TxDetail[]
   error?: string
   /** Total gas cost across all mint transactions, in wei */
   gasUsedWei?: string
+  /** Actual amounts deposited into the LP position (from IncreaseLiquidity event) */
+  amount0?: string
+  amount1?: string
+  /** Leftover tokens that did not fit into the LP position — carry into the first rebalance */
+  leftoverToken0?: string
+  leftoverToken1?: string
 }
 
 export interface CloseRequest {
@@ -86,17 +106,25 @@ export interface CloseRequest {
   tokenId: string
   /** Per-request wallet: private key (0x...) or BIP39 mnemonic phrase */
   walletPrivateKey?: string
+  /** Leftover tokens from the last rebalance cycle — included in reported amounts and unwrapped */
+  pendingToken0?: string
+  pendingToken1?: string
 }
 
 export interface CloseResult {
   success: boolean
   txHashes: string[]
+  txDetails?: TxDetail[]
   /** Labels for each txHash entry (1:1 mapping) */
   txSteps?: string[]
   /** Total token0 collected at close (principal + fees, raw units) */
   token0Amount?: string
   /** Total token1 collected at close (principal + fees, raw units) */
   token1Amount?: string
+  /** LP fees only (total collected minus principal) — for accumulating into strategy stats */
+  feesCollected?: FeesCollected
+  /** Total gas cost across all close transactions, in wei */
+  gasUsedWei?: string
   error?: string
 }
 

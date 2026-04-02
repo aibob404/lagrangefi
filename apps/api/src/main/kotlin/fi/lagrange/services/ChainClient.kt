@@ -3,6 +3,7 @@ package fi.lagrange.services
 import io.ktor.client.*
 import io.ktor.client.call.*
 import io.ktor.client.engine.cio.*
+import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.client.request.*
 import io.ktor.http.*
@@ -42,10 +43,18 @@ data class FeesCollectedResponse(
 )
 
 @Serializable
+data class TxRecord(
+    val txHash: String,
+    val action: String,
+    val gasUsedWei: Long = 0L,
+)
+
+@Serializable
 data class RebalanceResponse(
     val success: Boolean,
     val txHashes: List<String>,
     val txSteps: List<String>? = null,
+    val txDetails: List<TxRecord>? = null,
     val newTokenId: String? = null,
     val error: String? = null,
     val feesCollected: FeesCollectedResponse? = null,
@@ -55,6 +64,8 @@ data class RebalanceResponse(
     val positionToken0End: String? = null,
     val positionToken1End: String? = null,
     val isRecovery: Boolean? = null,
+    val leftoverToken0: String? = null,
+    val leftoverToken1: String? = null,
 )
 
 @Serializable
@@ -62,8 +73,11 @@ data class CloseResponse(
     val success: Boolean,
     val txHashes: List<String>,
     val txSteps: List<String>? = null,
+    val txDetails: List<TxRecord>? = null,
     val token0Amount: String? = null,
     val token1Amount: String? = null,
+    val feesCollected: FeesCollectedResponse? = null,
+    val gasUsedWei: String? = null,
     val error: String? = null,
 )
 
@@ -82,6 +96,17 @@ data class RebalanceRequest(
     val newTickUpper: Int,
     val slippageTolerance: Double,
     val walletPrivateKey: String,
+    val pendingToken0: String = "0",
+    val pendingToken1: String = "0",
+)
+
+@Serializable
+data class CloseRequest(
+    val idempotencyKey: String,
+    val tokenId: String,
+    val walletPrivateKey: String,
+    val pendingToken0: String = "0",
+    val pendingToken1: String = "0",
 )
 
 @Serializable
@@ -100,14 +125,30 @@ data class MintResponse(
     val success: Boolean,
     val tokenId: String? = null,
     val txHashes: List<String>,
+    val txDetails: List<TxRecord>? = null,
     val error: String? = null,
     val gasUsedWei: String? = null,
+    val amount0: String? = null,
+    val amount1: String? = null,
+    val leftoverToken0: String? = null,
+    val leftoverToken1: String? = null,
 )
 
 class ChainClient(private val baseUrl: String) {
     private val http = HttpClient(CIO) {
         install(ContentNegotiation) {
             json(Json { ignoreUnknownKeys = true })
+        }
+    }
+
+    // Rebalance and close involve multiple sequential on-chain transactions — use a long timeout.
+    private val longHttp = HttpClient(CIO) {
+        install(ContentNegotiation) {
+            json(Json { ignoreUnknownKeys = true })
+        }
+        install(HttpTimeout) {
+            requestTimeoutMillis = 5 * 60 * 1_000L  // 5 minutes
+            socketTimeoutMillis  = 5 * 60 * 1_000L
         }
     }
 
@@ -136,13 +177,21 @@ class ChainClient(private val baseUrl: String) {
             setBody(req)
         }.body()
 
-    suspend fun close(idempotencyKey: String, tokenId: String, walletPrivateKey: String): CloseResponse =
-        http.post("$baseUrl/execute/close") {
+    suspend fun close(
+        idempotencyKey: String,
+        tokenId: String,
+        walletPrivateKey: String,
+        pendingToken0: String = "0",
+        pendingToken1: String = "0",
+    ): CloseResponse =
+        longHttp.post("$baseUrl/execute/close") {
             contentType(ContentType.Application.Json)
-            setBody(mapOf(
-                "idempotencyKey" to idempotencyKey,
-                "tokenId" to tokenId,
-                "walletPrivateKey" to walletPrivateKey,
+            setBody(CloseRequest(
+                idempotencyKey = idempotencyKey,
+                tokenId = tokenId,
+                walletPrivateKey = walletPrivateKey,
+                pendingToken0 = pendingToken0,
+                pendingToken1 = pendingToken1,
             ))
         }.body()
 
@@ -154,8 +203,10 @@ class ChainClient(private val baseUrl: String) {
         slippageTolerance: Double,
         /** Wallet private key (0x...) or BIP39 mnemonic phrase — forwarded to chain service */
         walletPrivateKey: String,
+        pendingToken0: String = "0",
+        pendingToken1: String = "0",
     ): RebalanceResponse =
-        http.post("$baseUrl/execute/rebalance") {
+        longHttp.post("$baseUrl/execute/rebalance") {
             contentType(ContentType.Application.Json)
             setBody(RebalanceRequest(
                 idempotencyKey = idempotencyKey,
@@ -164,6 +215,8 @@ class ChainClient(private val baseUrl: String) {
                 newTickUpper = newTickUpper,
                 slippageTolerance = slippageTolerance,
                 walletPrivateKey = walletPrivateKey,
+                pendingToken0 = pendingToken0,
+                pendingToken1 = pendingToken1,
             ))
         }.body()
 }

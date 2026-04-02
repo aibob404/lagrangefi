@@ -1,4 +1,4 @@
-import type { Strategy, StrategyStats, RebalanceEvent } from './types'
+import type { Strategy, StrategyStats, StrategyEvent } from './types'
 
 // ── Token helpers ────────────────────────────────────────────────────────────
 
@@ -6,59 +6,58 @@ export function rawToFloat(raw: string, decimals: number): number {
   return Number(BigInt(raw)) / Math.pow(10, decimals)
 }
 
-// ── Impermanent Loss (#1) ────────────────────────────────────────────────────
-// IL = current_position_value_usd - hold_value_usd
-// hold_value = what you'd have if you just held the initial tokens at current price
-// Negative IL means you lost vs holding.
+// ── Compare to Hold ──────────────────────────────────────────────────────────
+// How does the LP strategy compare to simply holding the initial tokens?
+//
+// compareUsd = hodlValueUsd - currentTotalValueUsd
+//   positive → HODL would be ahead by that amount (LP underperforming)
+//   negative → LP strategy is ahead by abs(compareUsd) (LP outperforming)
+//
+// currentTotalValueUsd comes from computeTotalReturn (LP + unclaimed fees + pending).
 
-export interface ILResult {
-  ilUsd: number       // negative = loss vs hold
-  ilPct: number       // as % of deposit value
-  holdValueUsd: number
-  currentPositionUsd: number
+export interface CompareToHoldResult {
+  compareUsd: number          // hodlValue - totalValue; positive = HODL winning
+  comparePct: number          // as % of hodl value
+  hodlValueUsd: number
+  currentTotalValueUsd: number
 }
 
-export function computeIL(
+export function computeCompareToHold(
   strategy: Strategy,
   dec0: number,
   dec1: number,
-  label0: string,         // e.g. 'WETH'
+  label0: string,
   currentEthPrice: number,
-  currentToken0Raw: string,
-  currentToken1Raw: string,
-): ILResult | null {
-  if (!strategy.initialToken0Amount || !strategy.initialToken1Amount || !strategy.openEthPriceUsd) return null
+  currentTotalValueUsd: number,   // from computeTotalReturn
+): CompareToHoldResult | null {
+  if (!strategy.initialToken0Amount || !strategy.initialToken1Amount) return null
 
   const init0 = rawToFloat(strategy.initialToken0Amount, dec0)
   const init1 = rawToFloat(strategy.initialToken1Amount, dec1)
 
-  // Hold value at current price (same token amounts, new price)
-  const holdValueUsd = label0.includes('WETH')
+  const hodlValueUsd = label0.includes('WETH')
     ? init0 * currentEthPrice + init1
     : init1 * currentEthPrice + init0
 
-  // Current position value
-  const cur0 = rawToFloat(currentToken0Raw, dec0)
-  const cur1 = rawToFloat(currentToken1Raw, dec1)
-  const currentPositionUsd = label0.includes('WETH')
-    ? cur0 * currentEthPrice + cur1
-    : cur1 * currentEthPrice + cur0
+  const compareUsd = hodlValueUsd - currentTotalValueUsd
+  const comparePct = hodlValueUsd > 0 ? (compareUsd / hodlValueUsd) * 100 : 0
 
-  const ilUsd = currentPositionUsd - holdValueUsd
-  const ilPct = strategy.initialValueUsd ? (ilUsd / strategy.initialValueUsd) * 100 : 0
-
-  return { ilUsd, ilPct, holdValueUsd, currentPositionUsd }
+  return { compareUsd, comparePct, hodlValueUsd, currentTotalValueUsd }
 }
 
 // ── Total Return (#2) ────────────────────────────────────────────────────────
-// For active:  (current_position_usd + fees_collected_usd) - initial_deposit_usd
-// For stopped: (withdrawn_usd + fees_collected_usd) - initial_deposit_usd
+// Net Return = currentTotalValueUsd - initialValueUsd - gasCostUsd
+//
+// currentTotalValueUsd (active)  = LP principal + unclaimed fees + pending wallet tokens
+// currentTotalValueUsd (stopped) = endValueUsd (already includes pending + collected at close)
 
 export interface TotalReturnResult {
   totalReturnUsd: number
   totalReturnPct: number | null
-  positionValueUsd: number   // current (active) or withdrawn (stopped)
-  feesCollectedUsd: number
+  currentTotalValueUsd: number
+  lpValueUsd: number          // LP principal only
+  unclaimedFeesUsd: number    // tokensOwed (not yet collected)
+  pendingValueUsd: number     // wallet leftover from last mint cycle
   gasSpentUsd: number
 }
 
@@ -69,50 +68,71 @@ export function computeTotalReturn(
   dec1: number,
   label0: string,
   currentEthPrice: number,
-  // For active strategies: pass live position token amounts
+  // For active strategies: live LP principal amounts
   liveToken0Raw?: string,
   liveToken1Raw?: string,
+  // For active strategies: unclaimed fees sitting in the position (tokensOwed)
+  liveTokensOwed0Raw?: string,
+  liveTokensOwed1Raw?: string,
 ): TotalReturnResult | null {
   if (!strategy.initialValueUsd) return null
 
-  let positionValueUsd: number
+  const gasSpentUsd = stats.gasCostUsd > 0
+    ? stats.gasCostUsd
+    : ((stats.gasCostWei / 1e18) * currentEthPrice)
 
-  if (strategy.status === 'stopped') {
-    if (stats.closeToken0Amount && stats.closeToken1Amount && stats.closeEthPriceUsd) {
-      const c0 = rawToFloat(stats.closeToken0Amount, dec0)
-      const c1 = rawToFloat(stats.closeToken1Amount, dec1)
-      positionValueUsd = label0.includes('WETH')
-        ? c0 * stats.closeEthPriceUsd + c1
-        : c1 * stats.closeEthPriceUsd + c0
-    } else if (stats.closeValueUsd != null) {
-      positionValueUsd = stats.closeValueUsd
+  let currentTotalValueUsd: number
+  let lpValueUsd: number
+  let unclaimedFeesUsd = 0
+  let pendingValueUsd = 0
+
+  if (strategy.status === 'STOPPED_MANUALLY' || strategy.status === 'STOPPED_ON_ERROR') {
+    // endValueUsd already includes pending + all collected tokens at close price
+    if (strategy.endValueUsd != null) {
+      currentTotalValueUsd = strategy.endValueUsd
+      lpValueUsd = strategy.endValueUsd
+    } else if (strategy.endToken0Amount && strategy.endToken1Amount && strategy.endEthPriceUsd) {
+      const c0 = rawToFloat(strategy.endToken0Amount, dec0)
+      const c1 = rawToFloat(strategy.endToken1Amount, dec1)
+      currentTotalValueUsd = label0.includes('WETH')
+        ? c0 * strategy.endEthPriceUsd + c1
+        : c1 * strategy.endEthPriceUsd + c0
+      lpValueUsd = currentTotalValueUsd
     } else {
       return null
     }
   } else {
     if (!liveToken0Raw || !liveToken1Raw) return null
+
     const t0 = rawToFloat(liveToken0Raw, dec0)
     const t1 = rawToFloat(liveToken1Raw, dec1)
-    positionValueUsd = label0.includes('WETH')
+    lpValueUsd = label0.includes('WETH')
       ? t0 * currentEthPrice + t1
       : t1 * currentEthPrice + t0
+
+    if (liveTokensOwed0Raw && liveTokensOwed1Raw) {
+      const o0 = rawToFloat(liveTokensOwed0Raw, dec0)
+      const o1 = rawToFloat(liveTokensOwed1Raw, dec1)
+      unclaimedFeesUsd = label0.includes('WETH')
+        ? o0 * currentEthPrice + o1
+        : o1 * currentEthPrice + o0
+    }
+
+    const p0 = rawToFloat(strategy.pendingToken0, dec0)
+    const p1 = rawToFloat(strategy.pendingToken1, dec1)
+    pendingValueUsd = label0.includes('WETH')
+      ? p0 * currentEthPrice + p1
+      : p1 * currentEthPrice + p0
+
+    currentTotalValueUsd = lpValueUsd + unclaimedFeesUsd + pendingValueUsd
   }
 
-  const feesCollectedUsd = stats.feesCollectedUsd > 0
-    ? stats.feesCollectedUsd
-    : (rawToFloat(stats.feesCollectedToken0, dec0) * currentEthPrice +
-       rawToFloat(stats.feesCollectedToken1, dec1))
-
-  const gasSpentUsd = stats.gasCostUsd > 0
-    ? stats.gasCostUsd
-    : (rawToFloat(stats.gasCostWei, 18) * currentEthPrice)
-
-  const totalReturnUsd = (positionValueUsd + feesCollectedUsd) - strategy.initialValueUsd
+  const totalReturnUsd = currentTotalValueUsd - strategy.initialValueUsd - gasSpentUsd
   const totalReturnPct = strategy.initialValueUsd > 0
     ? (totalReturnUsd / strategy.initialValueUsd) * 100
     : null
 
-  return { totalReturnUsd, totalReturnPct, positionValueUsd, feesCollectedUsd, gasSpentUsd }
+  return { totalReturnUsd, totalReturnPct, currentTotalValueUsd, lpValueUsd, unclaimedFeesUsd, pendingValueUsd, gasSpentUsd }
 }
 
 // ── APY (#6) ─────────────────────────────────────────────────────────────────
@@ -196,17 +216,18 @@ export interface RebalanceProfit {
 }
 
 export function computeRebalanceProfit(
-  event: RebalanceEvent,
+  event: StrategyEvent,
   dec0: number,
   dec1: number,
   label0: string,
 ): RebalanceProfit | null {
-  if (!event.feesCollectedToken0 || !event.feesCollectedToken1 || !event.gasCostWei || !event.ethPriceUsd) return null
-  const ethPrice = parseFloat(event.ethPriceUsd)
-  const f0 = rawToFloat(event.feesCollectedToken0, dec0)
-  const f1 = rawToFloat(event.feesCollectedToken1, dec1)
+  const d = event.rebalanceDetails
+  if (!d?.feesCollectedToken0 || !d?.feesCollectedToken1 || d?.gasUsedWei == null || d?.ethPriceUsd == null) return null
+  const ethPrice = d.ethPriceUsd
+  const f0 = rawToFloat(d.feesCollectedToken0, dec0)
+  const f1 = rawToFloat(d.feesCollectedToken1, dec1)
   const feesUsd = label0.includes('WETH') ? f0 * ethPrice + f1 : f1 * ethPrice + f0
-  const gasUsd = rawToFloat(event.gasCostWei, 18) * ethPrice
+  const gasUsd = (d.gasUsedWei / 1e18) * ethPrice
   const netUsd = feesUsd - gasUsd
   return { feesUsd, gasUsd, netUsd, isProfitable: netUsd >= 0 }
 }

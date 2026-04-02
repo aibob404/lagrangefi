@@ -21,7 +21,7 @@ export interface PoolState {
   decimals1: number
 }
 
-export type StrategyStatus = 'active' | 'stopped'
+export type StrategyStatus = 'INITIATING' | 'ACTIVE' | 'STOPPED_MANUALLY' | 'STOPPED_ON_ERROR'
 
 export interface Strategy {
   id: number
@@ -39,11 +39,17 @@ export interface Strategy {
   status: StrategyStatus
   createdAt: string
   stoppedAt: string | null
+  stopReason: string | null
   initialToken0Amount: string | null
   initialToken1Amount: string | null
   initialValueUsd: number | null
   openEthPriceUsd: number | null
-  openTxHashes: string | null   // JSON array string
+  endToken0Amount: string | null
+  endToken1Amount: string | null
+  endValueUsd: number | null
+  endEthPriceUsd: number | null
+  pendingToken0: string
+  pendingToken1: string
 }
 
 export interface StrategyStats {
@@ -51,16 +57,9 @@ export interface StrategyStats {
   totalRebalances: number
   feesCollectedToken0: string
   feesCollectedToken1: string
-  gasCostWei: string
+  gasCostWei: number
   gasCostUsd: number
   feesCollectedUsd: number
-  closeEthPriceUsd: number | null
-  closeFeesUsd: number | null
-  closeGasUsd: number | null
-  closeToken0Amount: string | null
-  closeToken1Amount: string | null
-  closeValueUsd: number | null
-  closeTxHashes: string | null   // JSON array string
   totalPollTicks: number
   inRangeTicks: number
   timeInRangePct: number
@@ -68,27 +67,39 @@ export interface StrategyStats {
   updatedAt: string
 }
 
-export interface RebalanceEvent {
+export interface ChainTransaction {
   id: number
-  strategyId: number
-  tokenId: string
-  status: 'pending' | 'success' | 'failed'
+  txHash: string
+  action: string
+  gasUsedWei: number
+}
+
+export interface RebalanceDetails {
+  oldNftTokenId: string | null
+  newNftTokenId: string | null
   newTickLower: number | null
   newTickUpper: number | null
-  newTokenId: string | null
-  txHashes: string | null
-  txSteps: string | null         // JSON array string
   feesCollectedToken0: string | null
   feesCollectedToken1: string | null
-  gasCostWei: string | null
+  gasUsedWei: number | null
+  ethPriceUsd: number | null
   positionToken0Start: string | null
   positionToken1Start: string | null
   positionToken0End: string | null
   positionToken1End: string | null
-  ethPriceUsd: string | null
+}
+
+export interface StrategyEvent {
+  id: number
+  strategyId: number
+  action: string    // "REBALANCE" | "START_STRATEGY" | "CLOSE_STRATEGY"
+  status: 'pending' | 'success' | 'failed'
+  idempotencyKey: string
   errorMessage: string | null
   triggeredAt: string
   completedAt: string | null
+  rebalanceDetails: RebalanceDetails | null
+  transactions: ChainTransaction[]
 }
 
 export interface User {

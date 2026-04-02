@@ -1,5 +1,5 @@
 import { createWalletClientForKey, publicClient } from '../config.js'
-import type { CloseRequest, CloseResult } from '@lagrangefi/shared'
+import type { CloseRequest, CloseResult, TxDetail } from '@lagrangefi/shared'
 
 // Uniswap v3 NonfungiblePositionManager on Arbitrum
 const POSITION_MANAGER = '0xC36442b4a4522E871399CD717aBDD847Ab11FE88' as const
@@ -12,13 +12,6 @@ const WETH_ABI = [
     stateMutability: 'nonpayable',
     inputs: [{ name: 'wad', type: 'uint256' }],
     outputs: [],
-  },
-  {
-    name: 'balanceOf',
-    type: 'function',
-    stateMutability: 'view',
-    inputs: [{ name: 'account', type: 'address' }],
-    outputs: [{ name: '', type: 'uint256' }],
   },
 ] as const
 
@@ -92,14 +85,38 @@ const POSITION_MANAGER_ABI = [
 const MAX_UINT128 = 2n ** 128n - 1n
 const DEADLINE_BUFFER = 300n // 5 minutes
 
+// keccak256("Collect(uint256,address,uint256,uint256)")
+const COLLECT_EVENT_TOPIC = '0x40d0efd1a53d60ecbf40971b9daf7dc90178c3aadc7aab1765632738fa8b8f01' as const
+
+function parseTotalCollected(
+  receipt: Awaited<ReturnType<typeof publicClient.waitForTransactionReceipt>>
+): { amount0: bigint; amount1: bigint } | undefined {
+  const log = receipt.logs.find(
+    (l) =>
+      l.address.toLowerCase() === POSITION_MANAGER.toLowerCase() &&
+      l.topics[0]?.toLowerCase() === COLLECT_EVENT_TOPIC.toLowerCase()
+  )
+  if (!log || !log.data || log.data === '0x') return undefined
+  const data = log.data.slice(2)
+  if (data.length < 192) return undefined
+  const amount0 = BigInt('0x' + data.slice(64, 128))
+  const amount1 = BigInt('0x' + data.slice(128, 192))
+  return { amount0, amount1 }
+}
+
 
 export async function closePosition(req: CloseRequest): Promise<CloseResult> {
   const walletClient = createWalletClientForKey(req.walletPrivateKey)
   const tokenId = BigInt(req.tokenId)
   const deadline = BigInt(Math.floor(Date.now() / 1000)) + DEADLINE_BUFFER
   const account = walletClient.account!
-  const txHashes: string[] = []
-  const txSteps: string[] = []
+  const txDetails: TxDetail[] = []
+
+  const trackTx = async (hash: `0x${string}`, action: string) => {
+    const receipt = await publicClient.waitForTransactionReceipt({ hash })
+    txDetails.push({ txHash: hash, action, gasUsedWei: Number(receipt.gasUsed * receipt.effectiveGasPrice) })
+    return receipt
+  }
 
   // 1. Fetch current position
   const position = await publicClient.readContract({
@@ -110,8 +127,25 @@ export async function closePosition(req: CloseRequest): Promise<CloseResult> {
   })
   const liquidity = position[7]
 
-  // 2. Remove all liquidity (if any)
+  // 2. Simulate decreaseLiquidity to capture principal before executing
+  // (fees = total_collected - principal)
+  let principal0 = 0n
+  let principal1 = 0n
   if (liquidity > 0n) {
+    try {
+      const sim = await publicClient.simulateContract({
+        address: POSITION_MANAGER,
+        abi: POSITION_MANAGER_ABI,
+        functionName: 'decreaseLiquidity',
+        account: account.address,
+        args: [{ tokenId, liquidity, amount0Min: 0n, amount1Min: 0n, deadline }],
+      })
+      principal0 = sim.result[0]
+      principal1 = sim.result[1]
+    } catch {
+      // non-fatal: fees will be 0 (conservative fallback)
+    }
+
     const decreaseTx = await walletClient.writeContract({
       address: POSITION_MANAGER,
       abi: POSITION_MANAGER_ABI,
@@ -124,29 +158,13 @@ export async function closePosition(req: CloseRequest): Promise<CloseResult> {
         deadline,
       }],
     })
-    await publicClient.waitForTransactionReceipt({ hash: decreaseTx })
-    txHashes.push(decreaseTx)
-    txSteps.push('Remove Liquidity')
+    const decreaseReceipt = await trackTx(decreaseTx, 'REMOVE_LIQUIDITY')
+    if (decreaseReceipt.status === 'reverted') {
+      throw new Error(`decreaseLiquidity reverted (tx: ${decreaseTx})`)
+    }
   }
 
-  // 3. Simulate collect on current chain state (post-decreaseLiquidity) to capture exact amounts
-  let token0Amount: string | undefined
-  let token1Amount: string | undefined
-  try {
-    const { result: collected } = await publicClient.simulateContract({
-      address: POSITION_MANAGER,
-      abi: POSITION_MANAGER_ABI,
-      functionName: 'collect',
-      args: [{ tokenId, recipient: account.address, amount0Max: MAX_UINT128, amount1Max: MAX_UINT128 }],
-      account: account.address,
-    })
-    token0Amount = collected[0].toString()
-    token1Amount = collected[1].toString()
-  } catch {
-    // non-fatal: amounts remain undefined
-  }
-
-  // 3b. Execute collect
+  // 3. Execute collect and parse exact amounts from the Collect event
   const collectTx = await walletClient.writeContract({
     address: POSITION_MANAGER,
     abi: POSITION_MANAGER_ABI,
@@ -158,9 +176,8 @@ export async function closePosition(req: CloseRequest): Promise<CloseResult> {
       amount1Max: MAX_UINT128,
     }],
   })
-  await publicClient.waitForTransactionReceipt({ hash: collectTx })
-  txHashes.push(collectTx)
-  txSteps.push('Collect Tokens')
+  const collectReceipt = await trackTx(collectTx, 'COLLECT_FEES')
+  const collected = parseTotalCollected(collectReceipt)
 
   // 4. Burn the NFT
   const burnTx = await walletClient.writeContract({
@@ -169,28 +186,36 @@ export async function closePosition(req: CloseRequest): Promise<CloseResult> {
     functionName: 'burn',
     args: [tokenId],
   })
-  await publicClient.waitForTransactionReceipt({ hash: burnTx })
-  txHashes.push(burnTx)
-  txSteps.push('Burn NFT')
+  await trackTx(burnTx, 'BURN')
 
-  // 5. Unwrap WETH → ETH so the wallet holds native ETH for future LP starts
-  const wethBalance = await publicClient.readContract({
-    address: WETH,
-    abi: WETH_ABI,
-    functionName: 'balanceOf',
-    args: [account.address],
-  })
-  if (wethBalance > 0n) {
+  // 5. Unwrap WETH from this position + any pending WETH from the last rebalance cycle
+  const pending0 = BigInt(req.pendingToken0 ?? '0')
+  const pending1 = BigInt(req.pendingToken1 ?? '0')
+  const wethToUnwrap = (collected?.amount0 ?? 0n) + pending0
+  if (wethToUnwrap > 0n) {
     const unwrapTx = await walletClient.writeContract({
       address: WETH,
       abi: WETH_ABI,
       functionName: 'withdraw',
-      args: [wethBalance],
+      args: [wethToUnwrap],
     })
-    await publicClient.waitForTransactionReceipt({ hash: unwrapTx })
-    txHashes.push(unwrapTx)
-    txSteps.push('Unwrap WETH')
+    await trackTx(unwrapTx, 'WITHDRAW_TO_WALLET')
   }
 
-  return { success: true, txHashes, txSteps, token0Amount, token1Amount }
+  const totalCollected0 = collected?.amount0 ?? 0n
+  const totalCollected1 = collected?.amount1 ?? 0n
+
+  // Include pending tokens in reported amounts so P&L reflects all capital returned
+  const token0Amount = (totalCollected0 + pending0).toString()
+  const token1Amount = (totalCollected1 + pending1).toString()
+
+  const feesCollected = {
+    amount0: (totalCollected0 > principal0 ? totalCollected0 - principal0 : 0n).toString(),
+    amount1: (totalCollected1 > principal1 ? totalCollected1 - principal1 : 0n).toString(),
+  }
+
+  const txHashes = txDetails.map(d => d.txHash)
+  const gasUsedWei = txDetails.reduce((acc, d) => acc + BigInt(d.gasUsedWei), 0n).toString()
+
+  return { success: true, txHashes, txDetails, token0Amount, token1Amount, feesCollected, gasUsedWei }
 }

@@ -43,6 +43,13 @@ export interface FeesCollected {
   amount1: string
 }
 
+export interface SwapCost {
+  amountIn:      string  // raw bigint string (tokenIn)
+  amountOut:     string  // actual received (tokenOut)
+  fairAmountOut: string  // at pre-swap spot price (tokenOut)
+  direction:     'zeroForOne' | 'oneForZero'
+}
+
 export interface TxDetail {
   txHash: string
   action: string
@@ -72,6 +79,12 @@ export interface RebalanceResult {
   /** Leftover tokens that did not fit into the new LP position — carry into the next rebalance */
   leftoverToken0?: string
   leftoverToken1?: string
+  /** Swap cost (absent when no swap was needed) */
+  swapCost?:    SwapCost
+  /** Human-readable token1/token0 price before the swap (e.g. "2041.57000000") */
+  priceAtSwap?: string
+  /** Human-readable token1/token0 price after the swap (from Swap event sqrtPriceX96) */
+  priceAtEnd?:  string
 }
 
 export interface MintRequest {

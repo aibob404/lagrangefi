@@ -134,6 +134,16 @@ class UniswapStrategy(
                     positionToken1Start = result.positionToken1Start ?: "0",
                     positionToken0End = result.positionToken0End ?: "0",
                     positionToken1End = result.positionToken1End ?: "0",
+                    swapCost = result.swapCost?.let {
+                        fi.lagrange.services.SwapCostResponse(
+                            amountIn      = it.amountIn,
+                            amountOut     = it.amountOut,
+                            fairAmountOut = it.fairAmountOut,
+                            direction     = it.direction,
+                        )
+                    },
+                    priceAtDecision = ethPrice,
+                    priceAtEnd = result.priceAtEnd?.let { java.math.BigDecimal(it) },
                 )
 
                 result.newTokenId?.let { newId ->

@@ -43,6 +43,14 @@ data class FeesCollectedResponse(
 )
 
 @Serializable
+data class SwapCostResponse(
+    val amountIn:      String,
+    val amountOut:     String,
+    val fairAmountOut: String,
+    val direction:     String,  // "zeroForOne" | "oneForZero"
+)
+
+@Serializable
 data class TxRecord(
     val txHash: String,
     val action: String,
@@ -66,6 +74,9 @@ data class RebalanceResponse(
     val isRecovery: Boolean? = null,
     val leftoverToken0: String? = null,
     val leftoverToken1: String? = null,
+    val swapCost:    SwapCostResponse? = null,
+    val priceAtSwap: String? = null,
+    val priceAtEnd:  String? = null,
 )
 
 @Serializable

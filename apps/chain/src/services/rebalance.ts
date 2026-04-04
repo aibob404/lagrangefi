@@ -1,6 +1,6 @@
 import { createWalletClientForKey, publicClient } from '../config.js'
 import { calculateSwapAmount, executeSwap, getTokenDecimals } from './swap.js'
-import type { RebalanceRequest, RebalanceResult, FeesCollected, TxDetail } from '@lagrangefi/shared'
+import type { RebalanceRequest, RebalanceResult, FeesCollected, TxDetail, SwapCost } from '@lagrangefi/shared'
 
 // Uniswap v3 NonfungiblePositionManager on Arbitrum
 const POSITION_MANAGER = '0xC36442b4a4522E871399CD717aBDD847Ab11FE88' as const
@@ -324,9 +324,12 @@ export async function rebalance(req: RebalanceRequest): Promise<RebalanceResult>
     slippageTolerance: req.slippageTolerance,
   })
 
+  let swapCostResult: SwapCost | undefined
+  let sqrtPriceX96AfterSwap: bigint = poolState[0]  // default: pre-swap price if no swap
+
   if (swap !== null) {
     const [tokenIn, tokenOut] = swap.zeroForOne ? [token0, token1] : [token1, token0]
-    const swapTx = await executeSwap({
+    const swapResult = await executeSwap({
       tokenIn,
       tokenOut,
       fee,
@@ -334,9 +337,32 @@ export async function rebalance(req: RebalanceRequest): Promise<RebalanceResult>
       amountOutMinimum: swap.amountOutMinimum,
       deadline,
       walletClient,
+      zeroForOne: swap.zeroForOne,
     })
-    await trackTx(swapTx, 'SWAP')
+    await trackTx(swapResult.txHash, 'SWAP')
+
+    // Fair amount at pre-swap spot price (no fee, no slippage)
+    const sqrtP = Number(poolState[0]) / 2 ** 96
+    const fairAmountOut = swap.zeroForOne
+      ? BigInt(Math.floor(Number(swap.amountIn) * sqrtP * sqrtP))
+      : BigInt(Math.floor(Number(swap.amountIn) / (sqrtP * sqrtP)))
+
+    sqrtPriceX96AfterSwap = swapResult.sqrtPriceX96After
+
+    swapCostResult = {
+      amountIn:      swap.amountIn.toString(),
+      amountOut:     swapResult.amountOut.toString(),
+      fairAmountOut: fairAmountOut.toString(),
+      direction:     swap.zeroForOne ? 'zeroForOne' : 'oneForZero',
+    }
   }
+
+  // Human-readable prices: token1/token0 (e.g. USDC per WETH = USD price of ETH)
+  const decimalAdjust = Math.pow(10, decimals0 - decimals1)
+  const sqrtPBefore = Number(poolState[0]) / 2 ** 96
+  const priceAtSwap = (sqrtPBefore * sqrtPBefore * decimalAdjust).toFixed(8)
+  const sqrtPAfter = Number(sqrtPriceX96AfterSwap) / 2 ** 96
+  const priceAtEnd = (sqrtPAfter * sqrtPAfter * decimalAdjust).toFixed(8)
 
   // Re-fetch balances after the swap, then subtract trueDust to get usable amounts only.
   // trueDust = whatever was in the wallet before we started that isn't our pending capital.
@@ -414,7 +440,7 @@ export async function rebalance(req: RebalanceRequest): Promise<RebalanceResult>
   const leftoverToken1 = (finalUsable1 > deposited1 ? finalUsable1 - deposited1 : 0n).toString()
 
   const isRecovery = liquidity === 0n
-  return { success: true, txHashes, txDetails, newTokenId, feesCollected, gasUsedWei, positionToken0Start, positionToken1Start, positionToken0End, positionToken1End, isRecovery, leftoverToken0, leftoverToken1 }
+  return { success: true, txHashes, txDetails, newTokenId, feesCollected, gasUsedWei, positionToken0Start, positionToken1Start, positionToken0End, positionToken1End, isRecovery, leftoverToken0, leftoverToken1, swapCost: swapCostResult, priceAtSwap, priceAtEnd }
 
   } catch (err) {
     // Recovery: collect tokens back to wallet so they are not stranded in the position manager

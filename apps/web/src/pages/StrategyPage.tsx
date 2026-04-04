@@ -493,7 +493,7 @@ function RebalanceEventRow({ event, index, dec0, dec1, label0, label1, expanded,
             )}
 
             {/* Execution P&L breakdown — only shown when API provides price data */}
-            {event.status !== 'failed' && d?.priceAtDecision != null && (() => {
+            {d?.priceAtDecision != null && (() => {
               const swapCostUsd = d.swapCostUsd ?? 0
               const driftUsd    = d.priceDriftUsd ?? 0
               const driftPct    = d.priceDriftPct ?? 0

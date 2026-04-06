@@ -85,6 +85,13 @@ export interface RebalanceResult {
   priceAtSwap?: string
   /** Human-readable token1/token0 price after the swap (from Swap event sqrtPriceX96) */
   priceAtEnd?:  string
+  /**
+   * Present on failure when a collect ran before the failure (e.g. burn fee-cap error).
+   * Total raw token amounts (principal + fees) recovered to the wallet.
+   * The API must save these as pendingToken0/pendingToken1 so the next rebalance re-invests them.
+   */
+  recoveredToken0?: string
+  recoveredToken1?: string
 }
 
 export interface MintRequest {

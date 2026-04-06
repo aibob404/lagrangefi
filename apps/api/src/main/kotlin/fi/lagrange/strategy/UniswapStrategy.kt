@@ -182,6 +182,39 @@ class UniswapStrategy(
                         it[completedAt] = Clock.System.now()
                     }
                 }
+
+                // If on-chain transactions ran before the failure (e.g. decreaseLiquidity + collect
+                // completed but burn was rejected), record their gas and any collected fees so that
+                // strategy_stats and chain_transactions stay accurate.
+                val txRecords = buildTxRecords(result.txDetails, result.txHashes, result.txSteps, result.gasUsedWei?.toLongOrNull() ?: 0L)
+                if (txRecords.isNotEmpty()) {
+                    val fees0 = result.feesCollected?.amount0 ?: "0"
+                    val fees1 = result.feesCollected?.amount1 ?: "0"
+                    val totalGasWei = result.gasUsedWei?.toLongOrNull()
+                        ?: txRecords.sumOf { it.gasUsedWei }
+                    strategyService.recordFailedRebalanceOnChainWork(
+                        strategyId = strategy.id,
+                        eventId = eventId,
+                        totalGasWei = totalGasWei,
+                        ethPriceUsd = ethPrice,
+                        txRecords = txRecords,
+                        fees0 = fees0,
+                        fees1 = fees1,
+                    )
+                }
+
+                // Persist recovered token amounts as pending so the next rebalance re-invests them.
+                // These are the principal + fees that were collected to the wallet before the failure.
+                val recovered0 = result.recoveredToken0 ?: "0"
+                val recovered1 = result.recoveredToken1 ?: "0"
+                val r0 = recovered0.toBigIntegerOrNull() ?: java.math.BigInteger.ZERO
+                val r1 = recovered1.toBigIntegerOrNull() ?: java.math.BigInteger.ZERO
+                if (r0 > java.math.BigInteger.ZERO || r1 > java.math.BigInteger.ZERO) {
+                    val newPending0 = ((strategy.pendingToken0.toBigIntegerOrNull() ?: java.math.BigInteger.ZERO) + r0).toString()
+                    val newPending1 = ((strategy.pendingToken1.toBigIntegerOrNull() ?: java.math.BigInteger.ZERO) + r1).toString()
+                    strategyService.updatePending(strategy.id, newPending0, newPending1)
+                    log.info("Strategy=${strategy.id} recovered tokens saved as pending: token0=$newPending0 token1=$newPending1")
+                }
             }
         } catch (e: Exception) {
             val isTimeout = e is HttpRequestTimeoutException

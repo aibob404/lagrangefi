@@ -253,6 +253,65 @@ class StrategyService {
     }
 
     /**
+     * Record on-chain work from a failed rebalance (decreaseLiquidity / collect ran before the error).
+     * Inserts ChainTransactions for gas accounting and accumulates gas cost + fees into StrategyStats.
+     * Does NOT increment totalRebalances — the rebalance did not complete successfully.
+     */
+    fun recordFailedRebalanceOnChainWork(
+        strategyId: Int,
+        eventId: Int,
+        totalGasWei: Long,
+        ethPriceUsd: java.math.BigDecimal,
+        txRecords: List<TxRecord>,
+        fees0: String,
+        fees1: String,
+    ) = transaction {
+        val now = Clock.System.now()
+        val HALF_UP = java.math.RoundingMode.HALF_UP
+
+        for (tx in txRecords) {
+            try {
+                ChainTransactions.insert {
+                    it[strategyEventId] = eventId
+                    it[txHash] = tx.txHash
+                    it[action] = tx.action
+                    it[gasCostWei] = tx.gasUsedWei
+                    it[ethToUsdPrice] = ethPriceUsd
+                    it[txTimestamp] = now
+                    it[createdAt] = now
+                }
+            } catch (_: Exception) {
+                // Ignore duplicate tx_hash — idempotent on retry
+            }
+        }
+
+        val statsRow = StrategyStats.selectAll().where { StrategyStats.strategyId eq strategyId }.firstOrNull()
+            ?: return@transaction
+        val strategy = Strategies.selectAll().where { Strategies.id eq strategyId }.firstOrNull()
+        val dec0 = strategy?.get(Strategies.token0Decimals) ?: 18
+        val dec1 = strategy?.get(Strategies.token1Decimals) ?: 6
+        val ethSideIsToken0 = dec0 == 18
+
+        val gasEth = java.math.BigDecimal(totalGasWei)
+            .divide(java.math.BigDecimal("1000000000000000000"), 18, HALF_UP)
+        val feesUsd = (toUsd(fees0, dec0, ethPriceUsd, ethSideIsToken0) +
+                       toUsd(fees1, dec1, ethPriceUsd, !ethSideIsToken0)).setScale(2, HALF_UP)
+        val newFees0 = (statsRow[StrategyStats.feesCollectedToken0].toBigIntegerOrNull() ?: java.math.BigInteger.ZERO) +
+                       (fees0.toBigIntegerOrNull() ?: java.math.BigInteger.ZERO)
+        val newFees1 = (statsRow[StrategyStats.feesCollectedToken1].toBigIntegerOrNull() ?: java.math.BigInteger.ZERO) +
+                       (fees1.toBigIntegerOrNull() ?: java.math.BigInteger.ZERO)
+
+        StrategyStats.update({ StrategyStats.strategyId eq strategyId }) {
+            it[gasCostWei] = statsRow[StrategyStats.gasCostWei] + totalGasWei
+            it[gasCostUsd] = statsRow[StrategyStats.gasCostUsd] + gasEth.multiply(ethPriceUsd).setScale(2, HALF_UP)
+            it[feesCollectedToken0] = newFees0.toString()
+            it[feesCollectedToken1] = newFees1.toString()
+            it[feesCollectedUsd] = statsRow[StrategyStats.feesCollectedUsd] + feesUsd
+            it[updatedAt] = now
+        }
+    }
+
+    /**
      * Record a completed rebalance event: updates StrategyEvents to success, inserts RebalanceDetails,
      * inserts ChainTransactions, and accumulates StrategyStats — all in one transaction.
      * Must only be called when the rebalance has fully succeeded.

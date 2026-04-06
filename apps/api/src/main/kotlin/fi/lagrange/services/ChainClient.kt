@@ -77,6 +77,9 @@ data class RebalanceResponse(
     val swapCost:    SwapCostResponse? = null,
     val priceAtSwap: String? = null,
     val priceAtEnd:  String? = null,
+    /** Present on failure when collect ran before the error — total principal+fees sent to wallet */
+    val recoveredToken0: String? = null,
+    val recoveredToken1: String? = null,
 )
 
 @Serializable

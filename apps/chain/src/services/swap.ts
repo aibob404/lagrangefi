@@ -187,8 +187,10 @@ export async function executeSwap(params: {
   deadline: bigint
   walletClient: WalletClientWithChain
   zeroForOne: boolean
+  maxFeePerGas?: bigint
+  maxPriorityFeePerGas?: bigint
 }): Promise<{ txHash: `0x${string}`; amountOut: bigint; sqrtPriceX96After: bigint }> {
-  const { walletClient } = params
+  const { walletClient, maxFeePerGas, maxPriorityFeePerGas } = params
   const account = walletClient.account!
 
   // Approve SwapRouter to spend tokenIn
@@ -197,6 +199,8 @@ export async function executeSwap(params: {
     abi: ERC20_ABI,
     functionName: 'approve',
     args: [SWAP_ROUTER, params.amountIn],
+    maxFeePerGas,
+    maxPriorityFeePerGas,
   })
   await publicClient.waitForTransactionReceipt({ hash: approveTx })
 
@@ -214,6 +218,8 @@ export async function executeSwap(params: {
       amountOutMinimum: params.amountOutMinimum,
       sqrtPriceLimitX96: 0n,
     }],
+    maxFeePerGas,
+    maxPriorityFeePerGas,
   })
   const swapReceipt = await publicClient.waitForTransactionReceipt({ hash: swapTx })
   const swapEvent = parseSwapEvent(swapReceipt, params.zeroForOne)

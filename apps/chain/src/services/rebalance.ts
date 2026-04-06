@@ -154,6 +154,15 @@ export async function rebalance(req: RebalanceRequest): Promise<RebalanceResult>
   const account = walletClient.account!
   const txDetails: TxDetail[] = []
 
+  // Bug fix: fetch gas price once at the start of the rebalance and apply a 50% buffer.
+  // Using per-call auto-estimation caused partial failures when baseFee rose between txs
+  // (e.g. collect succeeded but burn was rejected with "maxFeePerGas < baseFee").
+  const feeData = await publicClient.estimateFeesPerGas()
+  const maxFeePerGas = feeData.maxFeePerGas !== undefined
+    ? (feeData.maxFeePerGas * 3n) / 2n   // 50% buffer over estimated max fee
+    : undefined
+  const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas
+
   const trackTx = async (hash: `0x${string}`, action: string) => {
     const receipt = await publicClient.waitForTransactionReceipt({ hash })
     txDetails.push({ txHash: hash, action, gasUsedWei: Number(receipt.gasUsed * receipt.effectiveGasPrice) })
@@ -221,6 +230,8 @@ export async function rebalance(req: RebalanceRequest): Promise<RebalanceResult>
       abi: POSITION_MANAGER_ABI,
       functionName: 'decreaseLiquidity',
       args: [decreaseParams],
+      maxFeePerGas,
+      maxPriorityFeePerGas,
     })
     const decreaseReceipt = await trackTx(decreaseTx, 'REMOVE_LIQUIDITY')
     if (decreaseReceipt.status === 'reverted') {
@@ -250,6 +261,8 @@ export async function rebalance(req: RebalanceRequest): Promise<RebalanceResult>
         amount0Max: MAX_UINT128,
         amount1Max: MAX_UINT128,
       }],
+      maxFeePerGas,
+      maxPriorityFeePerGas,
     })
     const collectReceipt = await trackTx(collectTx, 'COLLECT_FEES')
 
@@ -269,6 +282,8 @@ export async function rebalance(req: RebalanceRequest): Promise<RebalanceResult>
       abi: POSITION_MANAGER_ABI,
       functionName: 'burn',
       args: [tokenId],
+      maxFeePerGas,
+      maxPriorityFeePerGas,
     })
     await trackTx(burnTx, 'BURN')
   }
@@ -338,6 +353,8 @@ export async function rebalance(req: RebalanceRequest): Promise<RebalanceResult>
       deadline,
       walletClient,
       zeroForOne: swap.zeroForOne,
+      maxFeePerGas,
+      maxPriorityFeePerGas,
     })
     await trackTx(swapResult.txHash, 'SWAP')
 
@@ -374,9 +391,9 @@ export async function rebalance(req: RebalanceRequest): Promise<RebalanceResult>
   const finalUsable1 = postSwapBalance1 > trueDust1 ? postSwapBalance1 - trueDust1 : 0n
 
   // 8. Approve position manager for usable amounts only — sequential to avoid nonce collision
-  const approveTx0 = await walletClient.writeContract({ address: token0, abi: ERC20_ABI, functionName: 'approve', args: [POSITION_MANAGER, finalUsable0] })
+  const approveTx0 = await walletClient.writeContract({ address: token0, abi: ERC20_ABI, functionName: 'approve', args: [POSITION_MANAGER, finalUsable0], maxFeePerGas, maxPriorityFeePerGas })
   await trackTx(approveTx0, 'APPROVE')
-  const approveTx1 = await walletClient.writeContract({ address: token1, abi: ERC20_ABI, functionName: 'approve', args: [POSITION_MANAGER, finalUsable1] })
+  const approveTx1 = await walletClient.writeContract({ address: token1, abi: ERC20_ABI, functionName: 'approve', args: [POSITION_MANAGER, finalUsable1], maxFeePerGas, maxPriorityFeePerGas })
   await trackTx(approveTx1, 'APPROVE')
 
   // 9. Mint new position at new range
@@ -397,6 +414,8 @@ export async function rebalance(req: RebalanceRequest): Promise<RebalanceResult>
       recipient: account.address,
       deadline,
     }],
+    maxFeePerGas,
+    maxPriorityFeePerGas,
   })
   const mintReceipt = await trackTx(mintTx, 'MINT')
 
@@ -443,7 +462,8 @@ export async function rebalance(req: RebalanceRequest): Promise<RebalanceResult>
   return { success: true, txHashes, txDetails, newTokenId, feesCollected, gasUsedWei, positionToken0Start, positionToken1Start, positionToken0End, positionToken1End, isRecovery, leftoverToken0, leftoverToken1, swapCost: swapCostResult, priceAtSwap, priceAtEnd }
 
   } catch (err) {
-    // Recovery: collect tokens back to wallet so they are not stranded in the position manager
+    // Recovery: collect any tokens still owed in the position back to the wallet so they are
+    // never left stranded in the position manager contract.
     try {
       const recoverTx = await walletClient.writeContract({
         address: POSITION_MANAGER,
@@ -455,15 +475,39 @@ export async function rebalance(req: RebalanceRequest): Promise<RebalanceResult>
           amount0Max: MAX_UINT128,
           amount1Max: MAX_UINT128,
         }],
+        maxFeePerGas,
+        maxPriorityFeePerGas,
       })
       await trackTx(recoverTx, 'COLLECT_FEES')
     } catch (collectErr) {
       // Recovery failed — include both errors in the response
       const msg = err instanceof Error ? err.message : String(err)
       const collectMsg = collectErr instanceof Error ? collectErr.message : String(collectErr)
-      return { success: false, txHashes: txDetails.map(d => d.txHash), txDetails, error: `${msg}; recovery collect also failed: ${collectMsg}` }
+      const gasUsedWei = txDetails.reduce((acc, d) => acc + BigInt(d.gasUsedWei), 0n).toString()
+      return {
+        success: false,
+        txHashes: txDetails.map(d => d.txHash),
+        txDetails,
+        error: `${msg}; recovery collect also failed: ${collectMsg}`,
+        feesCollected,
+        gasUsedWei,
+        recoveredToken0: collectedFromPosition?.amount0.toString() ?? '0',
+        recoveredToken1: collectedFromPosition?.amount1.toString() ?? '0',
+      }
     }
     const msg = err instanceof Error ? err.message : String(err)
-    return { success: false, txHashes: txDetails.map(d => d.txHash), txDetails, error: `${msg}; tokens recovered to wallet` }
+    // collectedFromPosition is set when the main collect ran before the failure.
+    // Return these amounts so the API can save them as pending tokens for the next rebalance.
+    const gasUsedWei = txDetails.reduce((acc, d) => acc + BigInt(d.gasUsedWei), 0n).toString()
+    return {
+      success: false,
+      txHashes: txDetails.map(d => d.txHash),
+      txDetails,
+      error: `${msg}; tokens recovered to wallet`,
+      feesCollected,
+      gasUsedWei,
+      recoveredToken0: collectedFromPosition?.amount0.toString() ?? '0',
+      recoveredToken1: collectedFromPosition?.amount1.toString() ?? '0',
+    }
   }
 }

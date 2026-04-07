@@ -565,6 +565,32 @@ function RebalanceEventRow({ event, index, dec0, dec1, label0, label1, expanded,
               )
             })()}
 
+            {d?.ilUsd != null && (() => {
+              const il = d.ilUsd!
+              const ahead = il <= 0
+              return (
+                <div className={`bg-white/60 border rounded-xl p-3 space-y-1.5 ${ahead ? 'border-emerald-100/80' : 'border-orange-100/80'}`}>
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2">Impermanent Loss</p>
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <span className={`text-xs font-medium flex items-center gap-1.5 ${ahead ? 'text-emerald-700' : 'text-orange-600'}`}>
+                        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${ahead ? 'bg-emerald-400' : 'bg-orange-400'}`} />
+                        {ahead ? 'LP ahead of HODL' : 'HODL ahead of LP'}
+                      </span>
+                      {d.hodlValueUsd != null && (
+                        <p className="text-[10px] text-gray-400 font-mono mt-0.5 ml-3">
+                          HODL {formatUsd(d.hodlValueUsd)} vs LP {formatUsd(d.hodlValueUsd - il)}
+                        </p>
+                      )}
+                    </div>
+                    <p className={`text-xs font-bold font-mono ${ahead ? 'text-emerald-600' : 'text-orange-500'}`}>
+                      {ahead ? '' : '+'}{formatUsd(il)}
+                    </p>
+                  </div>
+                </div>
+              )
+            })()}
+
             {ratioBefore && ratioAfter && (
               <div className="bg-white/60 border border-white/80 rounded-xl p-3">
                 <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2.5">Token Ratio Drift</p>
@@ -1452,6 +1478,28 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
                                 </div>
                               </div>
                             )}
+
+                            {/* Impermanent loss (last rebalance snapshot) */}
+                            {st?.currentIlUsd != null && (() => {
+                              const il = st.currentIlUsd!
+                              const ahead = il <= 0
+                              return (
+                                <div className={`flex justify-between items-start px-2.5 py-1.5 rounded-lg border ${
+                                  ahead ? 'bg-emerald-50/40 border-emerald-100/50' : 'bg-orange-50/40 border-orange-100/50'
+                                }`}>
+                                  <div>
+                                    <span className={`text-xs font-medium flex items-center gap-1.5 mt-0.5 ${ahead ? 'text-emerald-700' : 'text-orange-600'}`}>
+                                      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${ahead ? 'bg-emerald-400' : 'bg-orange-400'}`} />
+                                      Impermanent loss
+                                    </span>
+                                    <p className="text-[10px] text-gray-400 mt-0.5 ml-3">HODL − LP at last rebalance</p>
+                                  </div>
+                                  <p className={`text-xs font-bold font-mono ${ahead ? 'text-emerald-600' : 'text-orange-500'}`}>
+                                    {ahead ? '' : '+'}{formatUsd(il)}
+                                  </p>
+                                </div>
+                              )
+                            })()}
 
                             {/* Fees/gas ratio bar */}
                             {st && totalReturn && st.feesCollectedUsd > 0 && (

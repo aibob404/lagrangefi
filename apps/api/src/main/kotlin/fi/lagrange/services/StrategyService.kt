@@ -59,6 +59,7 @@ data class StrategyStatsDto(
     val swapCostToken1: String,
     val swapCostUsd: Double,
     val avgPriceDriftPct: Double,
+    val currentIlUsd: Double?,
 )
 
 @Serializable
@@ -98,6 +99,9 @@ data class RebalanceDetailsDto(
     val priceAtEnd: Double?,
     val priceDriftPct: Double?,
     val priceDriftUsd: Double?,
+    // Impermanent loss
+    val ilUsd: Double?,
+    val hodlValueUsd: Double?,
 )
 
 @Serializable
@@ -390,6 +394,25 @@ class StrategyService {
             java.math.BigDecimal.ZERO to java.math.BigDecimal.ZERO
         }
 
+        // ── Impermanent loss at decision time ──
+        // IL = hodlValueUsd - lpValueUsd, both valued at priceAtDecision.
+        // hodlValueUsd: what the *initial* token amounts would be worth right now.
+        // lpValueUsd:   what the LP position is worth right now (before this rebalance).
+        // Positive IL means HODL is ahead; negative means LP is outperforming pure hold.
+        val (ilUsdNew, hodlValueUsdNew): Pair<java.math.BigDecimal?, java.math.BigDecimal?> = run {
+            val init0Str = strategy?.get(Strategies.initialToken0Amount)
+            val init1Str = strategy?.get(Strategies.initialToken1Amount)
+            if (init0Str != null && init1Str != null && priceAtDecision > java.math.BigDecimal.ZERO) {
+                val hodl = toUsd(init0Str, dec0, priceAtDecision, ethSideIsToken0) +
+                           toUsd(init1Str, dec1, priceAtDecision, !ethSideIsToken0)
+                val lp   = toUsd(positionToken0Start, dec0, priceAtDecision, ethSideIsToken0) +
+                           toUsd(positionToken1Start, dec1, priceAtDecision, !ethSideIsToken0)
+                (hodl - lp).setScale(2, HALF_UP) to hodl.setScale(2, HALF_UP)
+            } else {
+                null to null
+            }
+        }
+
         // ── Persist ──
 
         StrategyEvents.update({ StrategyEvents.id eq eventId }) {
@@ -419,6 +442,8 @@ class StrategyService {
             it[RebalanceDetails.priceAtEnd]            = priceAtEnd?.setScale(8, HALF_UP)
             it[RebalanceDetails.priceDriftPct]         = driftPct
             it[RebalanceDetails.priceDriftUsd]         = driftUsd
+            it[RebalanceDetails.ilUsd]                 = ilUsdNew
+            it[RebalanceDetails.hodlValueUsd]          = hodlValueUsdNew
         }
 
         for (tx in txRecords) {
@@ -471,6 +496,7 @@ class StrategyService {
             it[swapCostToken1] = newSwapCostToken1
             it[StrategyStats.swapCostUsd] = statsRow[StrategyStats.swapCostUsd] + swapCostUsdNew
             it[avgPriceDriftPct] = newAvgDrift
+            it[StrategyStats.currentIlUsd] = ilUsdNew
             it[updatedAt] = now
         }
     }
@@ -527,6 +553,7 @@ class StrategyService {
             swapCostToken1 = stats[StrategyStats.swapCostToken1],
             swapCostUsd = stats[StrategyStats.swapCostUsd].toDouble(),
             avgPriceDriftPct = stats[StrategyStats.avgPriceDriftPct].toDouble(),
+            currentIlUsd = stats[StrategyStats.currentIlUsd]?.toDouble(),
         )
     }
 
@@ -590,6 +617,8 @@ class StrategyService {
                         priceAtEnd            = d[RebalanceDetails.priceAtEnd]?.toDouble(),
                         priceDriftPct         = d[RebalanceDetails.priceDriftPct]?.toDouble(),
                         priceDriftUsd         = d[RebalanceDetails.priceDriftUsd]?.toDouble(),
+                        ilUsd                 = d[RebalanceDetails.ilUsd]?.toDouble(),
+                        hodlValueUsd          = d[RebalanceDetails.hodlValueUsd]?.toDouble(),
                     )
                 }
 

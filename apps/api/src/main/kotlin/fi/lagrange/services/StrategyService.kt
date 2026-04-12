@@ -1,11 +1,14 @@
 package fi.lagrange.services
 
 import fi.lagrange.model.ChainTransactions
+import fi.lagrange.model.EventStatus
 import fi.lagrange.model.RebalanceDetails
 import fi.lagrange.model.Strategies
 import fi.lagrange.model.StrategyEvents
 import fi.lagrange.model.StrategySnapshots
 import fi.lagrange.model.StrategyStats
+import fi.lagrange.model.StrategyStatus
+import fi.lagrange.strategy.buildTxRecords
 import kotlinx.datetime.Clock
 import kotlinx.serialization.Serializable
 import org.jetbrains.exposed.sql.*
@@ -140,7 +143,7 @@ class StrategyService {
         pendingToken1: String = "0",
     ): StrategyRecord = transaction {
         val activeCount = Strategies.selectAll()
-            .where { (Strategies.userId eq userId) and (Strategies.status inList listOf("ACTIVE", "INITIATING")) }
+            .where { (Strategies.userId eq userId) and (Strategies.status inList listOf(StrategyStatus.ACTIVE, StrategyStatus.INITIATING)) }
             .count()
         require(activeCount == 0L) { "You already have an active strategy. Pause or stop it before creating a new one." }
 
@@ -159,7 +162,7 @@ class StrategyService {
             it[Strategies.rangePercent] = rangePercent
             it[Strategies.slippageTolerance] = slippageTolerance
             it[Strategies.pollIntervalSeconds] = pollIntervalSeconds
-            it[status] = "ACTIVE"
+            it[status] = StrategyStatus.ACTIVE
             it[createdAt] = now
             it[stoppedAt] = null
             it[Strategies.initialToken0Amount] = initialToken0Amount
@@ -193,12 +196,12 @@ class StrategyService {
 
     fun stop(strategyId: Int, userId: Int, stopReason: String? = null, isError: Boolean = false): Boolean = transaction {
         val now = Clock.System.now()
-        val newStatus = if (isError) "STOPPED_ON_ERROR" else "STOPPED_MANUALLY"
+        val newStatus = if (isError) StrategyStatus.STOPPED_ON_ERROR else StrategyStatus.STOPPED_MANUALLY
         Strategies.update({
             (Strategies.id eq strategyId) and
             (Strategies.userId eq userId) and
-            (Strategies.status neq "STOPPED_MANUALLY") and
-            (Strategies.status neq "STOPPED_ON_ERROR")
+            (Strategies.status neq StrategyStatus.STOPPED_MANUALLY) and
+            (Strategies.status neq StrategyStatus.STOPPED_ON_ERROR)
         }) {
             it[status] = newStatus
             it[stoppedAt] = now
@@ -522,11 +525,10 @@ class StrategyService {
     }
 
     fun getStats(strategyId: Int, userId: Int): StrategyStatsDto? = transaction {
-        Strategies.selectAll()
+        val strategy = Strategies.selectAll()
             .where { (Strategies.id eq strategyId) and (Strategies.userId eq userId) }
             .firstOrNull() ?: return@transaction null
 
-        val strategy = Strategies.selectAll().where { Strategies.id eq strategyId }.single()
         val stats = StrategyStats.selectAll().where { StrategyStats.strategyId eq strategyId }.firstOrNull()
             ?: return@transaction null
 
@@ -635,6 +637,175 @@ class StrategyService {
                 rebalanceDetails = details,
                 transactions = txs,
             )
+        }
+    }
+
+    /** Record the START_STRATEGY event, mint ChainTransactions, and seed gas into StrategyStats */
+    fun recordStartStrategy(strategyId: Int, mintResult: MintResponse, ethPrice: java.math.BigDecimal) = transaction {
+        val mintGasLong = mintResult.gasUsedWei?.toLongOrNull() ?: 0L
+        val startIdempotencyKey = "start-${strategyId}-${mintResult.tokenId}"
+        val mintTxRecords = buildTxRecords(mintResult.txDetails, mintResult.txHashes, null, mintGasLong)
+
+        val startEventId = StrategyEvents.insert {
+            it[StrategyEvents.strategyId] = strategyId
+            it[action] = "START_STRATEGY"
+            it[idempotencyKey] = startIdempotencyKey
+            it[status] = EventStatus.SUCCESS
+            it[triggeredAt] = Clock.System.now()
+            it[completedAt] = Clock.System.now()
+        }[StrategyEvents.id]
+
+        mintTxRecords.forEach { tx ->
+            ChainTransactions.insert {
+                it[strategyEventId] = startEventId
+                it[txHash] = tx.txHash
+                it[ChainTransactions.action] = tx.action
+                it[gasCostWei] = tx.gasUsedWei
+                it[ethToUsdPrice] = ethPrice
+                it[txTimestamp] = Clock.System.now()
+                it[createdAt] = Clock.System.now()
+            }
+        }
+
+        val mintStatsRow = StrategyStats.selectAll().where { StrategyStats.strategyId eq strategyId }.firstOrNull()
+        if (mintStatsRow != null) {
+            val mintGasEth = java.math.BigDecimal(mintGasLong).divide(
+                java.math.BigDecimal("1000000000000000000"), 18, java.math.RoundingMode.HALF_UP
+            )
+            StrategyStats.update({ StrategyStats.strategyId eq strategyId }) {
+                it[StrategyStats.gasCostWei] = mintStatsRow[StrategyStats.gasCostWei] + mintGasLong
+                it[StrategyStats.gasCostUsd] = mintStatsRow[StrategyStats.gasCostUsd] +
+                    mintGasEth.multiply(ethPrice).setScale(2, java.math.RoundingMode.HALF_UP)
+                it[StrategyStats.updatedAt] = Clock.System.now()
+            }
+        }
+    }
+
+    /** Insert a CLOSE_STRATEGY event in pending state before the chain call (idempotency anchor) */
+    fun insertPendingCloseEvent(strategyId: Int, idempotencyKey: String): Int = transaction {
+        StrategyEvents.insert {
+            it[StrategyEvents.strategyId] = strategyId
+            it[action] = "CLOSE_STRATEGY"
+            it[StrategyEvents.idempotencyKey] = idempotencyKey
+            it[status] = EventStatus.PENDING
+            it[triggeredAt] = Clock.System.now()
+        }[StrategyEvents.id]
+    }
+
+    /** Mark a close event as failed when the chain call throws (Step 1.3) */
+    fun markCloseEventFailed(eventId: Int, errorMessage: String?) = transaction {
+        StrategyEvents.update({ StrategyEvents.id eq eventId }) {
+            it[status] = EventStatus.FAILED
+            it[StrategyEvents.errorMessage] = errorMessage
+            it[completedAt] = Clock.System.now()
+        }
+    }
+
+    /**
+     * Finalize a close: snapshot end position onto Strategies, then in one transaction update the
+     * CLOSE_STRATEGY event, insert ChainTransactions, and accumulate gas + fees into StrategyStats.
+     * Collapsing the two separate transactions (gas update + fee accumulation) into one eliminates
+     * the data-consistency gap where a crash between them left gas recorded but fees not.
+     */
+    fun finalizeCloseEvent(
+        strategyId: Int,
+        eventId: Int,
+        strategy: StrategyRecord,
+        closeResult: CloseResponse?,
+        closeEthPriceBD: java.math.BigDecimal,
+    ) {
+        val closedOk = closeResult?.success == true
+        val closeEthPrice = closeEthPriceBD.toDouble()
+        val token0Amt = closeResult?.token0Amount
+        val token1Amt = closeResult?.token1Amount
+
+        val closeValueUsd = if (token0Amt != null && token1Amt != null) {
+            val t0 = token0Amt.toBigIntegerOrNull()?.toBigDecimal()
+                ?.divide(java.math.BigDecimal.TEN.pow(strategy.token0Decimals), strategy.token0Decimals, java.math.RoundingMode.HALF_UP)?.toDouble() ?: 0.0
+            val t1 = token1Amt.toBigIntegerOrNull()?.toBigDecimal()
+                ?.divide(java.math.BigDecimal.TEN.pow(strategy.token1Decimals), strategy.token1Decimals, java.math.RoundingMode.HALF_UP)?.toDouble() ?: 0.0
+            if (strategy.token0Decimals == 18) t0 * closeEthPrice + t1
+            else t1 * closeEthPrice + t0
+        } else null
+
+        // Snapshot end position first (preserves ordering from original code)
+        recordClose(
+            strategyId = strategyId,
+            endToken0Amount = token0Amt,
+            endToken1Amount = token1Amt,
+            endValueUsd = closeValueUsd,
+            endEthPriceUsd = closeEthPrice,
+        )
+
+        transaction {
+            // Update pending event to its final status
+            StrategyEvents.update({ StrategyEvents.id eq eventId }) {
+                it[status] = if (closedOk) EventStatus.SUCCESS else EventStatus.FAILED
+                it[completedAt] = Clock.System.now()
+            }
+
+            if (closedOk) {
+                val closeTxRecords = buildTxRecords(
+                    txDetails = closeResult?.txDetails,
+                    txHashes = closeResult?.txHashes ?: emptyList(),
+                    txSteps = closeResult?.txSteps,
+                    totalGasWei = closeResult?.gasUsedWei?.toLongOrNull() ?: 0L,
+                )
+                closeTxRecords.forEach { tx ->
+                    ChainTransactions.insert {
+                        it[strategyEventId] = eventId
+                        it[txHash] = tx.txHash
+                        it[ChainTransactions.action] = tx.action
+                        it[gasCostWei] = tx.gasUsedWei
+                        it[ethToUsdPrice] = closeEthPriceBD
+                        it[txTimestamp] = Clock.System.now()
+                        it[createdAt] = Clock.System.now()
+                    }
+                }
+
+                val closeGasLong = closeResult?.gasUsedWei?.toLongOrNull() ?: 0L
+                val closeStatsRow = StrategyStats.selectAll()
+                    .where { StrategyStats.strategyId eq strategyId }.firstOrNull()
+                if (closeStatsRow != null) {
+                    val closeGasEth = java.math.BigDecimal(closeGasLong).divide(
+                        java.math.BigDecimal("1000000000000000000"), 18, java.math.RoundingMode.HALF_UP
+                    )
+                    val closeFees = closeResult?.feesCollected
+                    val fees0 = closeFees?.amount0?.toBigIntegerOrNull() ?: java.math.BigInteger.ZERO
+                    val fees1 = closeFees?.amount1?.toBigIntegerOrNull() ?: java.math.BigInteger.ZERO
+                    val dec0 = strategy.token0Decimals
+                    val dec1 = strategy.token1Decimals
+                    val ethSideIsToken0 = dec0 == 18
+
+                    val newFees0 = (closeStatsRow[StrategyStats.feesCollectedToken0].toBigIntegerOrNull()
+                        ?: java.math.BigInteger.ZERO) + fees0
+                    val newFees1 = (closeStatsRow[StrategyStats.feesCollectedToken1].toBigIntegerOrNull()
+                        ?: java.math.BigInteger.ZERO) + fees1
+
+                    val feesUsd = if (fees0 > java.math.BigInteger.ZERO || fees1 > java.math.BigInteger.ZERO) {
+                        val fee0Human = fees0.toBigDecimal().divide(
+                            java.math.BigDecimal.TEN.pow(dec0), dec0, java.math.RoundingMode.HALF_UP
+                        )
+                        val fee1Human = fees1.toBigDecimal().divide(
+                            java.math.BigDecimal.TEN.pow(dec1), dec1, java.math.RoundingMode.HALF_UP
+                        )
+                        if (ethSideIsToken0)
+                            fee0Human.multiply(closeEthPriceBD).add(fee1Human).setScale(2, java.math.RoundingMode.HALF_UP)
+                        else
+                            fee1Human.multiply(closeEthPriceBD).add(fee0Human).setScale(2, java.math.RoundingMode.HALF_UP)
+                    } else java.math.BigDecimal.ZERO
+
+                    StrategyStats.update({ StrategyStats.strategyId eq strategyId }) {
+                        it[gasCostWei] = closeStatsRow[StrategyStats.gasCostWei] + closeGasLong
+                        it[gasCostUsd] = closeStatsRow[StrategyStats.gasCostUsd] +
+                            closeGasEth.multiply(closeEthPriceBD).setScale(2, java.math.RoundingMode.HALF_UP)
+                        it[feesCollectedToken0] = newFees0.toString()
+                        it[feesCollectedToken1] = newFees1.toString()
+                        it[feesCollectedUsd] = closeStatsRow[StrategyStats.feesCollectedUsd] + feesUsd
+                        it[updatedAt] = Clock.System.now()
+                    }
+                }
+            }
         }
     }
 

@@ -1,5 +1,6 @@
 package fi.lagrange.strategy
 
+import fi.lagrange.model.EventStatus
 import fi.lagrange.model.StrategyEvents
 import fi.lagrange.services.ChainClient
 import fi.lagrange.services.PoolStateResponse
@@ -7,7 +8,6 @@ import fi.lagrange.services.PositionNotFoundException
 import fi.lagrange.services.StrategyRecord
 import fi.lagrange.services.StrategyService
 import fi.lagrange.services.TelegramNotifier
-import fi.lagrange.services.TxRecord
 import io.ktor.client.plugins.HttpRequestTimeoutException
 import kotlinx.datetime.Clock
 import org.jetbrains.exposed.sql.and
@@ -45,7 +45,7 @@ class UniswapStrategy(
             StrategyEvents.selectAll()
                 .where {
                     (StrategyEvents.strategyId eq strategy.id) and
-                    (StrategyEvents.status inList listOf("pending", "in_progress"))
+                    (StrategyEvents.status inList listOf(EventStatus.PENDING, EventStatus.IN_PROGRESS))
                 }
                 .any()
         }
@@ -84,7 +84,7 @@ class UniswapStrategy(
             StrategyEvents.selectAll()
                 .where {
                     (StrategyEvents.strategyId eq strategy.id) and
-                    (StrategyEvents.status inList listOf("pending", "in_progress"))
+                    (StrategyEvents.status inList listOf(EventStatus.PENDING, EventStatus.IN_PROGRESS))
                 }
                 .any()
         }
@@ -93,7 +93,7 @@ class UniswapStrategy(
             return
         }
 
-        val (newTickLower, newTickUpper) = calculateNewRange(poolState.tick, strategy.fee, strategy.rangePercent)
+        val (newTickLower, newTickUpper) = calcTickRange(poolState.tick, strategy.fee, strategy.rangePercent)
         val idempotencyKey = UUID.randomUUID().toString()
         val ethPrice = java.math.BigDecimal(poolState.price).setScale(8, java.math.RoundingMode.HALF_UP)
 
@@ -102,7 +102,7 @@ class UniswapStrategy(
                 it[strategyId] = strategy.id
                 it[action] = "REBALANCE"
                 it[StrategyEvents.idempotencyKey] = idempotencyKey
-                it[status] = "pending"
+                it[status] = EventStatus.PENDING
                 it[triggeredAt] = Clock.System.now()
             }[StrategyEvents.id]
         }
@@ -192,7 +192,7 @@ class UniswapStrategy(
                 telegram.sendAlert("[${strategy.name}] Rebalance FAILED: ${result.error}")
                 transaction {
                     StrategyEvents.update({ StrategyEvents.id eq eventId }) {
-                        it[status] = "failed"
+                        it[status] = EventStatus.FAILED
                         it[errorMessage] = result.error
                         it[completedAt] = Clock.System.now()
                     }
@@ -240,7 +240,7 @@ class UniswapStrategy(
                 telegram.sendAlert("[${strategy.name}] Rebalance timed out — still executing on-chain. Manual check required.")
                 transaction {
                     StrategyEvents.update({ StrategyEvents.id eq eventId }) {
-                        it[status] = "in_progress"
+                        it[status] = EventStatus.IN_PROGRESS
                         it[errorMessage] = e.message
                     }
                 }
@@ -249,7 +249,7 @@ class UniswapStrategy(
                 telegram.sendAlert("[${strategy.name}] Rebalance ERROR: ${e.message}")
                 transaction {
                     StrategyEvents.update({ StrategyEvents.id eq eventId }) {
-                        it[status] = "failed"
+                        it[status] = EventStatus.FAILED
                         it[errorMessage] = e.message
                         it[completedAt] = Clock.System.now()
                     }
@@ -258,55 +258,4 @@ class UniswapStrategy(
             }
         }
     }
-
-    private fun calculateNewRange(currentTick: Int, fee: Int, rangePercent: Double): Pair<Int, Int> {
-        val tickSpacing = feeToTickSpacing(fee)
-        val tickDelta = (Math.log(1.0 + rangePercent) / Math.log(1.0001)).toInt()
-        val rawLower = currentTick - tickDelta
-        val rawUpper = currentTick + tickDelta
-        val tickLower = (rawLower / tickSpacing) * tickSpacing
-        val tickUpper = (rawUpper / tickSpacing) * tickSpacing
-        return Pair(tickLower, tickUpper)
-    }
-
-    private fun feeToTickSpacing(fee: Int): Int = when (fee) {
-        100 -> 1
-        500 -> 10
-        3000 -> 60
-        10000 -> 200
-        else -> 60
-    }
-}
-
-/**
- * Build TxRecord list from chain response.
- * Prefers txDetails if chain service provides them; falls back to parallel txHashes + txSteps arrays.
- * When falling back, total gas is attributed to the last tx; all others get 0.
- */
-internal fun buildTxRecords(
-    txDetails: List<TxRecord>?,
-    txHashes: List<String>,
-    txSteps: List<String>?,
-    totalGasWei: Long,
-): List<TxRecord> {
-    if (txDetails != null) return txDetails
-    val steps = txSteps ?: txHashes.map { "UNKNOWN" }
-    return txHashes.zip(steps).mapIndexed { idx, (hash, step) ->
-        TxRecord(
-            txHash = hash,
-            action = stepToAction(step),
-            gasUsedWei = if (idx == txHashes.lastIndex) totalGasWei else 0L,
-        )
-    }
-}
-
-private fun stepToAction(step: String): String = when (step.lowercase()) {
-    "collect_fees", "collectfees" -> "COLLECT_FEES"
-    "burn" -> "BURN"
-    "approve" -> "APPROVE"
-    "swap" -> "SWAP"
-    "mint" -> "MINT"
-    "wrap" -> "WRAP"
-    "withdraw", "withdraw_to_wallet" -> "WITHDRAW_TO_WALLET"
-    else -> "UNKNOWN"
 }

@@ -1,16 +1,12 @@
 package fi.lagrange.strategy
 
-import fi.lagrange.model.Strategies
-import fi.lagrange.model.StrategyStatus
 import fi.lagrange.services.ChainClient
 import fi.lagrange.services.StrategyRecord
+import fi.lagrange.services.StrategyRepository
 import fi.lagrange.services.StrategyService
 import fi.lagrange.services.TelegramNotifier
 import fi.lagrange.services.WalletService
 import kotlinx.coroutines.runBlocking
-import org.jetbrains.exposed.sql.and
-import org.jetbrains.exposed.sql.selectAll
-import org.jetbrains.exposed.sql.transactions.transaction
 import org.slf4j.LoggerFactory
 import java.util.Timer
 import java.util.concurrent.ConcurrentHashMap
@@ -25,18 +21,15 @@ class StrategyScheduler(
     private val telegram: TelegramNotifier,
     private val walletService: WalletService,
     private val strategyService: StrategyService,
+    private val strategyRepo: StrategyRepository,
 ) {
-    private val log = LoggerFactory.getLogger(StrategyScheduler::class.java)
-    private val jobs = ConcurrentHashMap<Int, Timer>() // strategyId → Timer
+    private val log      = LoggerFactory.getLogger(StrategyScheduler::class.java)
+    private val jobs     = ConcurrentHashMap<Int, Timer>()
     private val executor = UniswapStrategy(chainClient, telegram, strategyService)
 
-    /** Called at startup — load all active strategies from DB and start their timers */
+    /** Called at startup — load all active strategies from DB and start their timers. */
     fun loadAndStartAll() {
-        val strategies = transaction {
-            Strategies.selectAll()
-                .where { Strategies.status eq StrategyStatus.ACTIVE.value }
-                .map { row -> rowToRecord(row) }
-        }
+        val strategies = strategyRepo.findAllActive()
         strategies.forEach { start(it) }
         log.info("Loaded ${strategies.size} active strategies")
     }
@@ -44,8 +37,11 @@ class StrategyScheduler(
     /** Start a timer for a strategy. No-op if already running. */
     fun start(strategy: StrategyRecord) {
         if (jobs.containsKey(strategy.id)) return
-        val intervalMs = strategy.pollIntervalSeconds * 1_000L
-        val timer = fixedRateTimer("strategy-${strategy.id}", daemon = true, period = intervalMs) {
+        val timer = fixedRateTimer(
+            name   = "strategy-${strategy.id}",
+            daemon = true,
+            period = strategy.pollIntervalSeconds * 1_000L,
+        ) {
             runBlocking {
                 try {
                     executeOnce(strategy.id)
@@ -59,59 +55,23 @@ class StrategyScheduler(
         log.info("Started scheduler for strategy=${strategy.id} user=${strategy.userId} interval=${strategy.pollIntervalSeconds}s")
     }
 
-    /** Cancel and remove a strategy's timer */
+    /** Cancel and remove a strategy's timer. */
     fun stop(strategyId: Int) {
         jobs.remove(strategyId)?.cancel()
         log.info("Stopped scheduler for strategy=$strategyId")
     }
 
     private suspend fun executeOnce(strategyId: Int) {
-        val strategy = transaction {
-            Strategies.selectAll()
-                .where { (Strategies.id eq strategyId) and (Strategies.status eq StrategyStatus.ACTIVE.value) }
-                .firstOrNull()?.let { row -> rowToRecord(row) }
-        }
-
+        val strategy = strategyRepo.findActiveById(strategyId)
         if (strategy == null) {
             stop(strategyId)
             return
         }
-
         val walletPhrase = walletService.getDecryptedPhrase(strategy.userId)
         if (walletPhrase == null) {
             log.warn("No wallet configured for user=${strategy.userId} (strategy=$strategyId). Skipping tick.")
             return
         }
-
         executor.execute(strategy, walletPhrase)
     }
-
-    private fun rowToRecord(row: org.jetbrains.exposed.sql.ResultRow) = StrategyRecord(
-        id = row[Strategies.id],
-        userId = row[Strategies.userId],
-        name = row[Strategies.name],
-        currentTokenId = row[Strategies.currentTokenId],
-        token0 = row[Strategies.token0],
-        token1 = row[Strategies.token1],
-        fee = row[Strategies.fee],
-        token0Decimals = row[Strategies.token0Decimals],
-        token1Decimals = row[Strategies.token1Decimals],
-        rangePercent = row[Strategies.rangePercent],
-        slippageTolerance = row[Strategies.slippageTolerance],
-        pollIntervalSeconds = row[Strategies.pollIntervalSeconds],
-        status = row[Strategies.status],
-        createdAt = row[Strategies.createdAt].toString(),
-        stoppedAt = row[Strategies.stoppedAt]?.toString(),
-        stopReason = row[Strategies.stopReason],
-        initialToken0Amount = row[Strategies.initialToken0Amount],
-        initialToken1Amount = row[Strategies.initialToken1Amount],
-        initialValueUsd = row[Strategies.initialValueUsd]?.toDouble(),
-        openEthPriceUsd = row[Strategies.openEthPriceUsd]?.toDouble(),
-        endToken0Amount = row[Strategies.endToken0Amount],
-        endToken1Amount = row[Strategies.endToken1Amount],
-        endValueUsd = row[Strategies.endValueUsd]?.toDouble(),
-        endEthPriceUsd = row[Strategies.endEthPriceUsd]?.toDouble(),
-        pendingToken0 = row[Strategies.pendingToken0],
-        pendingToken1 = row[Strategies.pendingToken1],
-    )
 }

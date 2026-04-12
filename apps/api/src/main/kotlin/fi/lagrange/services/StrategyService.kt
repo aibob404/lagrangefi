@@ -642,6 +642,7 @@ class StrategyService {
 
     /** Record the START_STRATEGY event, mint ChainTransactions, and seed gas into StrategyStats */
     fun recordStartStrategy(strategyId: Int, mintResult: MintResponse, ethPrice: java.math.BigDecimal) = transaction {
+        val now = Clock.System.now()
         val mintGasLong = mintResult.gasUsedWei?.toLongOrNull() ?: 0L
         val startIdempotencyKey = "start-${strategyId}-${mintResult.tokenId}"
         val mintTxRecords = buildTxRecords(mintResult.txDetails, mintResult.txHashes, null, mintGasLong)
@@ -651,8 +652,8 @@ class StrategyService {
             it[action] = "START_STRATEGY"
             it[idempotencyKey] = startIdempotencyKey
             it[status] = EventStatus.SUCCESS
-            it[triggeredAt] = Clock.System.now()
-            it[completedAt] = Clock.System.now()
+            it[triggeredAt] = now
+            it[completedAt] = now
         }[StrategyEvents.id]
 
         mintTxRecords.forEach { tx ->
@@ -662,8 +663,8 @@ class StrategyService {
                 it[ChainTransactions.action] = tx.action
                 it[gasCostWei] = tx.gasUsedWei
                 it[ethToUsdPrice] = ethPrice
-                it[txTimestamp] = Clock.System.now()
-                it[createdAt] = Clock.System.now()
+                it[txTimestamp] = now
+                it[createdAt] = now
             }
         }
 
@@ -676,7 +677,7 @@ class StrategyService {
                 it[StrategyStats.gasCostWei] = mintStatsRow[StrategyStats.gasCostWei] + mintGasLong
                 it[StrategyStats.gasCostUsd] = mintStatsRow[StrategyStats.gasCostUsd] +
                     mintGasEth.multiply(ethPrice).setScale(2, java.math.RoundingMode.HALF_UP)
-                it[StrategyStats.updatedAt] = Clock.System.now()
+                it[StrategyStats.updatedAt] = now
             }
         }
     }
@@ -702,10 +703,9 @@ class StrategyService {
     }
 
     /**
-     * Finalize a close: snapshot end position onto Strategies, then in one transaction update the
-     * CLOSE_STRATEGY event, insert ChainTransactions, and accumulate gas + fees into StrategyStats.
-     * Collapsing the two separate transactions (gas update + fee accumulation) into one eliminates
-     * the data-consistency gap where a crash between them left gas recorded but fees not.
+     * Finalize a close: snapshot end position onto Strategies, update the CLOSE_STRATEGY event,
+     * insert ChainTransactions, and accumulate gas + fees into StrategyStats — all in one transaction.
+     * Atomicity ensures that a crash cannot leave the position snapshotted but stats unrecorded.
      */
     fun finalizeCloseEvent(
         strategyId: Int,
@@ -714,34 +714,42 @@ class StrategyService {
         closeResult: CloseResponse?,
         closeEthPriceBD: java.math.BigDecimal,
     ) {
+        val HALF_UP = java.math.RoundingMode.HALF_UP
         val closedOk = closeResult?.success == true
-        val closeEthPrice = closeEthPriceBD.toDouble()
         val token0Amt = closeResult?.token0Amount
         val token1Amt = closeResult?.token1Amount
+        val dec0 = strategy.token0Decimals
+        val dec1 = strategy.token1Decimals
+        // ethSideIsToken0: assumes WETH/USDC pool with WETH as token0 (18 decimals).
+        // For USDC/WETH (token0=USDC), dec0==6 and this is false — correct.
+        val ethSideIsToken0 = dec0 == 18
 
-        val closeValueUsd = if (token0Amt != null && token1Amt != null) {
-            val t0 = token0Amt.toBigIntegerOrNull()?.toBigDecimal()
-                ?.divide(java.math.BigDecimal.TEN.pow(strategy.token0Decimals), strategy.token0Decimals, java.math.RoundingMode.HALF_UP)?.toDouble() ?: 0.0
-            val t1 = token1Amt.toBigIntegerOrNull()?.toBigDecimal()
-                ?.divide(java.math.BigDecimal.TEN.pow(strategy.token1Decimals), strategy.token1Decimals, java.math.RoundingMode.HALF_UP)?.toDouble() ?: 0.0
-            if (strategy.token0Decimals == 18) t0 * closeEthPrice + t1
-            else t1 * closeEthPrice + t0
+        // Compute closeValueUsd in BigDecimal throughout — no Double intermediate values
+        val closeValueUsd: java.math.BigDecimal? = if (token0Amt != null && token1Amt != null) {
+            val t0 = (token0Amt.toBigIntegerOrNull() ?: java.math.BigInteger.ZERO).toBigDecimal()
+                .divide(java.math.BigDecimal.TEN.pow(dec0), dec0, HALF_UP)
+            val t1 = (token1Amt.toBigIntegerOrNull() ?: java.math.BigInteger.ZERO).toBigDecimal()
+                .divide(java.math.BigDecimal.TEN.pow(dec1), dec1, HALF_UP)
+            if (ethSideIsToken0) t0.multiply(closeEthPriceBD).add(t1).setScale(2, HALF_UP)
+            else t1.multiply(closeEthPriceBD).add(t0).setScale(2, HALF_UP)
         } else null
 
-        // Snapshot end position first (preserves ordering from original code)
-        recordClose(
-            strategyId = strategyId,
-            endToken0Amount = token0Amt,
-            endToken1Amount = token1Amt,
-            endValueUsd = closeValueUsd,
-            endEthPriceUsd = closeEthPrice,
-        )
-
+        // Single transaction: position snapshot + event update + chain txs + stats
         transaction {
+            val now = Clock.System.now()
+
+            // Snapshot end position onto Strategies
+            Strategies.update({ Strategies.id eq strategyId }) {
+                it[Strategies.endToken0Amount] = token0Amt
+                it[Strategies.endToken1Amount] = token1Amt
+                it[Strategies.endValueUsd] = closeValueUsd
+                it[Strategies.endEthPriceUsd] = closeEthPriceBD.setScale(8, HALF_UP)
+            }
+
             // Update pending event to its final status
             StrategyEvents.update({ StrategyEvents.id eq eventId }) {
                 it[status] = if (closedOk) EventStatus.SUCCESS else EventStatus.FAILED
-                it[completedAt] = Clock.System.now()
+                it[completedAt] = now
             }
 
             if (closedOk) {
@@ -758,8 +766,8 @@ class StrategyService {
                         it[ChainTransactions.action] = tx.action
                         it[gasCostWei] = tx.gasUsedWei
                         it[ethToUsdPrice] = closeEthPriceBD
-                        it[txTimestamp] = Clock.System.now()
-                        it[createdAt] = Clock.System.now()
+                        it[txTimestamp] = now
+                        it[createdAt] = now
                     }
                 }
 
@@ -768,14 +776,11 @@ class StrategyService {
                     .where { StrategyStats.strategyId eq strategyId }.firstOrNull()
                 if (closeStatsRow != null) {
                     val closeGasEth = java.math.BigDecimal(closeGasLong).divide(
-                        java.math.BigDecimal("1000000000000000000"), 18, java.math.RoundingMode.HALF_UP
+                        java.math.BigDecimal("1000000000000000000"), 18, HALF_UP
                     )
                     val closeFees = closeResult?.feesCollected
                     val fees0 = closeFees?.amount0?.toBigIntegerOrNull() ?: java.math.BigInteger.ZERO
                     val fees1 = closeFees?.amount1?.toBigIntegerOrNull() ?: java.math.BigInteger.ZERO
-                    val dec0 = strategy.token0Decimals
-                    val dec1 = strategy.token1Decimals
-                    val ethSideIsToken0 = dec0 == 18
 
                     val newFees0 = (closeStatsRow[StrategyStats.feesCollectedToken0].toBigIntegerOrNull()
                         ?: java.math.BigInteger.ZERO) + fees0
@@ -783,26 +788,20 @@ class StrategyService {
                         ?: java.math.BigInteger.ZERO) + fees1
 
                     val feesUsd = if (fees0 > java.math.BigInteger.ZERO || fees1 > java.math.BigInteger.ZERO) {
-                        val fee0Human = fees0.toBigDecimal().divide(
-                            java.math.BigDecimal.TEN.pow(dec0), dec0, java.math.RoundingMode.HALF_UP
-                        )
-                        val fee1Human = fees1.toBigDecimal().divide(
-                            java.math.BigDecimal.TEN.pow(dec1), dec1, java.math.RoundingMode.HALF_UP
-                        )
-                        if (ethSideIsToken0)
-                            fee0Human.multiply(closeEthPriceBD).add(fee1Human).setScale(2, java.math.RoundingMode.HALF_UP)
-                        else
-                            fee1Human.multiply(closeEthPriceBD).add(fee0Human).setScale(2, java.math.RoundingMode.HALF_UP)
+                        val fee0Human = fees0.toBigDecimal().divide(java.math.BigDecimal.TEN.pow(dec0), dec0, HALF_UP)
+                        val fee1Human = fees1.toBigDecimal().divide(java.math.BigDecimal.TEN.pow(dec1), dec1, HALF_UP)
+                        if (ethSideIsToken0) fee0Human.multiply(closeEthPriceBD).add(fee1Human).setScale(2, HALF_UP)
+                        else fee1Human.multiply(closeEthPriceBD).add(fee0Human).setScale(2, HALF_UP)
                     } else java.math.BigDecimal.ZERO
 
                     StrategyStats.update({ StrategyStats.strategyId eq strategyId }) {
                         it[gasCostWei] = closeStatsRow[StrategyStats.gasCostWei] + closeGasLong
                         it[gasCostUsd] = closeStatsRow[StrategyStats.gasCostUsd] +
-                            closeGasEth.multiply(closeEthPriceBD).setScale(2, java.math.RoundingMode.HALF_UP)
+                            closeGasEth.multiply(closeEthPriceBD).setScale(2, HALF_UP)
                         it[feesCollectedToken0] = newFees0.toString()
                         it[feesCollectedToken1] = newFees1.toString()
                         it[feesCollectedUsd] = closeStatsRow[StrategyStats.feesCollectedUsd] + feesUsd
-                        it[updatedAt] = Clock.System.now()
+                        it[updatedAt] = now
                     }
                 }
             }

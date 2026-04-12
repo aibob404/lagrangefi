@@ -49,8 +49,8 @@ data class StopStrategyRequestDto(
     val reason: String? = null,
 )
 
-private val WETH = "0x82af49447d8a07e3bd95bd0d56f35241523fbab1"
-private val USDC = "0xaf88d065e77c8cc2239327c5edb3a432268e5831"
+private const val WETH = "0x82af49447d8a07e3bd95bd0d56f35241523fbab1"
+private const val USDC = "0xaf88d065e77c8cc2239327c5edb3a432268e5831"
 
 fun Application.configureRouting(
     chainClient: ChainClient,
@@ -304,7 +304,9 @@ fun Application.configureRouting(
                             closeResult = closeResult,
                             closeEthPriceBD = closeEthPriceBD,
                         )
-                    } catch (_: Exception) { /* non-fatal */ }
+                    } catch (e: Exception) {
+                        application.log.error("finalizeCloseEvent failed for strategy $strategyId (non-fatal): ${e.message}", e)
+                    }
                     telegram.sendAlert("Strategy <b>${strategy.name}</b> stopped.")
                     call.respond(mapOf("status" to "stopped"))
                 }

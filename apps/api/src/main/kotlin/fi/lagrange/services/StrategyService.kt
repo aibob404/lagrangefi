@@ -137,19 +137,19 @@ class StrategyService {
         pollIntervalSeconds: Long = 60,
         initialToken0Amount: String? = null,
         initialToken1Amount: String? = null,
-        initialValueUsd: Double? = null,
-        openEthPriceUsd: Double? = null,
+        initialValueUsd: java.math.BigDecimal? = null,
+        openEthPriceUsd: java.math.BigDecimal? = null,
         pendingToken0: String = "0",
         pendingToken1: String = "0",
     ): StrategyRecord = transaction {
         val activeCount = Strategies.selectAll()
-            .where { (Strategies.userId eq userId) and (Strategies.status inList listOf(StrategyStatus.ACTIVE, StrategyStatus.INITIATING)) }
+            .where { (Strategies.userId eq userId) and (Strategies.status inList listOf(StrategyStatus.ACTIVE.value, StrategyStatus.INITIATING.value)) }
             .count()
         require(activeCount == 0L) { "You already have an active strategy. Pause or stop it before creating a new one." }
 
         val now = Clock.System.now()
-        val initialValueBD: java.math.BigDecimal? = initialValueUsd?.let { java.math.BigDecimal(it.toString()).setScale(2, java.math.RoundingMode.HALF_UP) }
-        val openEthBD: java.math.BigDecimal? = openEthPriceUsd?.let { java.math.BigDecimal(it.toString()).setScale(8, java.math.RoundingMode.HALF_UP) }
+        val initialValueBD: java.math.BigDecimal? = initialValueUsd?.setScale(2, java.math.RoundingMode.HALF_UP)
+        val openEthBD: java.math.BigDecimal? = openEthPriceUsd?.setScale(8, java.math.RoundingMode.HALF_UP)
         val id = Strategies.insert {
             it[Strategies.userId] = userId
             it[Strategies.name] = name
@@ -162,7 +162,7 @@ class StrategyService {
             it[Strategies.rangePercent] = rangePercent
             it[Strategies.slippageTolerance] = slippageTolerance
             it[Strategies.pollIntervalSeconds] = pollIntervalSeconds
-            it[status] = StrategyStatus.ACTIVE
+            it[status] = StrategyStatus.ACTIVE.value
             it[createdAt] = now
             it[stoppedAt] = null
             it[Strategies.initialToken0Amount] = initialToken0Amount
@@ -196,12 +196,12 @@ class StrategyService {
 
     fun stop(strategyId: Int, userId: Int, stopReason: String? = null, isError: Boolean = false): Boolean = transaction {
         val now = Clock.System.now()
-        val newStatus = if (isError) StrategyStatus.STOPPED_ON_ERROR else StrategyStatus.STOPPED_MANUALLY
+        val newStatus = if (isError) StrategyStatus.STOPPED_ON_ERROR.value else StrategyStatus.STOPPED_MANUALLY.value
         Strategies.update({
             (Strategies.id eq strategyId) and
             (Strategies.userId eq userId) and
-            (Strategies.status neq StrategyStatus.STOPPED_MANUALLY) and
-            (Strategies.status neq StrategyStatus.STOPPED_ON_ERROR)
+            (Strategies.status neq StrategyStatus.STOPPED_MANUALLY.value) and
+            (Strategies.status neq StrategyStatus.STOPPED_ON_ERROR.value)
         }) {
             it[status] = newStatus
             it[stoppedAt] = now
@@ -241,6 +241,11 @@ class StrategyService {
             it[updatedAt] = now
         }
     }
+
+    private fun weiToEth(wei: Long): java.math.BigDecimal =
+        java.math.BigDecimal(wei).divide(
+            java.math.BigDecimal("1000000000000000000"), 18, java.math.RoundingMode.HALF_UP
+        )
 
     /**
      * Convert a raw token amount to USD.
@@ -299,8 +304,7 @@ class StrategyService {
         val dec1 = strategy?.get(Strategies.token1Decimals) ?: 6
         val ethSideIsToken0 = dec0 == 18
 
-        val gasEth = java.math.BigDecimal(totalGasWei)
-            .divide(java.math.BigDecimal("1000000000000000000"), 18, HALF_UP)
+        val gasEth = weiToEth(totalGasWei)
         val feesUsd = (toUsd(fees0, dec0, ethPriceUsd, ethSideIsToken0) +
                        toUsd(fees1, dec1, ethPriceUsd, !ethSideIsToken0)).setScale(2, HALF_UP)
         val newFees0 = (statsRow[StrategyStats.feesCollectedToken0].toBigIntegerOrNull() ?: java.math.BigInteger.ZERO) +
@@ -353,9 +357,7 @@ class StrategyService {
 
         // ── Compute all derived values first so both insert and stats update share them ──
 
-        val gasEth = java.math.BigDecimal(totalGasWei).divide(
-            java.math.BigDecimal("1000000000000000000"), 18, HALF_UP
-        )
+        val gasEth = weiToEth(totalGasWei)
 
         // Fees USD
         val feesUsdNew = (toUsd(fees0, dec0, ethPriceUsd, ethSideIsToken0) +
@@ -421,7 +423,7 @@ class StrategyService {
         // ── Persist ──
 
         StrategyEvents.update({ StrategyEvents.id eq eventId }) {
-            it[status] = "success"
+            it[status] = EventStatus.SUCCESS.value
             it[completedAt] = now
         }
 
@@ -651,7 +653,7 @@ class StrategyService {
             it[StrategyEvents.strategyId] = strategyId
             it[action] = "START_STRATEGY"
             it[idempotencyKey] = startIdempotencyKey
-            it[status] = EventStatus.SUCCESS
+            it[status] = EventStatus.SUCCESS.value
             it[triggeredAt] = now
             it[completedAt] = now
         }[StrategyEvents.id]
@@ -670,9 +672,7 @@ class StrategyService {
 
         val mintStatsRow = StrategyStats.selectAll().where { StrategyStats.strategyId eq strategyId }.firstOrNull()
         if (mintStatsRow != null) {
-            val mintGasEth = java.math.BigDecimal(mintGasLong).divide(
-                java.math.BigDecimal("1000000000000000000"), 18, java.math.RoundingMode.HALF_UP
-            )
+            val mintGasEth = weiToEth(mintGasLong)
             StrategyStats.update({ StrategyStats.strategyId eq strategyId }) {
                 it[StrategyStats.gasCostWei] = mintStatsRow[StrategyStats.gasCostWei] + mintGasLong
                 it[StrategyStats.gasCostUsd] = mintStatsRow[StrategyStats.gasCostUsd] +
@@ -688,7 +688,7 @@ class StrategyService {
             it[StrategyEvents.strategyId] = strategyId
             it[action] = "CLOSE_STRATEGY"
             it[StrategyEvents.idempotencyKey] = idempotencyKey
-            it[status] = EventStatus.PENDING
+            it[status] = EventStatus.PENDING.value
             it[triggeredAt] = Clock.System.now()
         }[StrategyEvents.id]
     }
@@ -696,7 +696,7 @@ class StrategyService {
     /** Mark a close event as failed when the chain call throws (Step 1.3) */
     fun markCloseEventFailed(eventId: Int, errorMessage: String?) = transaction {
         StrategyEvents.update({ StrategyEvents.id eq eventId }) {
-            it[status] = EventStatus.FAILED
+            it[status] = EventStatus.FAILED.value
             it[StrategyEvents.errorMessage] = errorMessage
             it[completedAt] = Clock.System.now()
         }
@@ -748,7 +748,7 @@ class StrategyService {
 
             // Update pending event to its final status
             StrategyEvents.update({ StrategyEvents.id eq eventId }) {
-                it[status] = if (closedOk) EventStatus.SUCCESS else EventStatus.FAILED
+                it[status] = if (closedOk) EventStatus.SUCCESS.value else EventStatus.FAILED.value
                 it[completedAt] = now
             }
 
@@ -775,9 +775,7 @@ class StrategyService {
                 val closeStatsRow = StrategyStats.selectAll()
                     .where { StrategyStats.strategyId eq strategyId }.firstOrNull()
                 if (closeStatsRow != null) {
-                    val closeGasEth = java.math.BigDecimal(closeGasLong).divide(
-                        java.math.BigDecimal("1000000000000000000"), 18, HALF_UP
-                    )
+                    val closeGasEth = weiToEth(closeGasLong)
                     val closeFees = closeResult?.feesCollected
                     val fees0 = closeFees?.amount0?.toBigIntegerOrNull() ?: java.math.BigInteger.ZERO
                     val fees1 = closeFees?.amount1?.toBigIntegerOrNull() ?: java.math.BigInteger.ZERO

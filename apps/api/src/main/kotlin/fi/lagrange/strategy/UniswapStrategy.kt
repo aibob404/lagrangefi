@@ -45,7 +45,7 @@ class UniswapStrategy(
             StrategyEvents.selectAll()
                 .where {
                     (StrategyEvents.strategyId eq strategy.id) and
-                    (StrategyEvents.status inList listOf(EventStatus.PENDING, EventStatus.IN_PROGRESS))
+                    (StrategyEvents.status inList listOf(EventStatus.PENDING.value, EventStatus.IN_PROGRESS.value))
                 }
                 .any()
         }
@@ -84,7 +84,7 @@ class UniswapStrategy(
             StrategyEvents.selectAll()
                 .where {
                     (StrategyEvents.strategyId eq strategy.id) and
-                    (StrategyEvents.status inList listOf(EventStatus.PENDING, EventStatus.IN_PROGRESS))
+                    (StrategyEvents.status inList listOf(EventStatus.PENDING.value, EventStatus.IN_PROGRESS.value))
                 }
                 .any()
         }
@@ -102,7 +102,7 @@ class UniswapStrategy(
                 it[strategyId] = strategy.id
                 it[action] = "REBALANCE"
                 it[StrategyEvents.idempotencyKey] = idempotencyKey
-                it[status] = EventStatus.PENDING
+                it[status] = EventStatus.PENDING.value
                 it[triggeredAt] = Clock.System.now()
             }[StrategyEvents.id]
         }
@@ -192,7 +192,7 @@ class UniswapStrategy(
                 telegram.sendAlert("[${strategy.name}] Rebalance FAILED: ${result.error}")
                 transaction {
                     StrategyEvents.update({ StrategyEvents.id eq eventId }) {
-                        it[status] = EventStatus.FAILED
+                        it[status] = EventStatus.FAILED.value
                         it[errorMessage] = result.error
                         it[completedAt] = Clock.System.now()
                     }
@@ -240,7 +240,7 @@ class UniswapStrategy(
                 telegram.sendAlert("[${strategy.name}] Rebalance timed out — still executing on-chain. Manual check required.")
                 transaction {
                     StrategyEvents.update({ StrategyEvents.id eq eventId }) {
-                        it[status] = EventStatus.IN_PROGRESS
+                        it[status] = EventStatus.IN_PROGRESS.value
                         it[errorMessage] = e.message
                     }
                 }
@@ -249,7 +249,7 @@ class UniswapStrategy(
                 telegram.sendAlert("[${strategy.name}] Rebalance ERROR: ${e.message}")
                 transaction {
                     StrategyEvents.update({ StrategyEvents.id eq eventId }) {
-                        it[status] = EventStatus.FAILED
+                        it[status] = EventStatus.FAILED.value
                         it[errorMessage] = e.message
                         it[completedAt] = Clock.System.now()
                     }

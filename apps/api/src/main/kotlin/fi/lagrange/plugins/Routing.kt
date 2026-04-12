@@ -76,7 +76,7 @@ fun Application.configureRouting(
                 get("/position") {
                     val userId = call.getUserId()
                     val strategy = strategyService.listForUser(userId)
-                        .firstOrNull { it.status == StrategyStatus.ACTIVE }
+                        .firstOrNull { it.status == StrategyStatus.ACTIVE.value }
                         ?: return@get call.respond(HttpStatusCode.NotFound, mapOf("error" to "No active strategy"))
                     try {
                         val position = chainClient.getPosition(strategy.currentTokenId)
@@ -89,7 +89,7 @@ fun Application.configureRouting(
                 get("/pool-state") {
                     val userId = call.getUserId()
                     val strategy = strategyService.listForUser(userId)
-                        .firstOrNull { it.status == StrategyStatus.ACTIVE }
+                        .firstOrNull { it.status == StrategyStatus.ACTIVE.value }
                         ?: return@get call.respond(HttpStatusCode.NotFound, mapOf("error" to "No active strategy"))
                     try {
                         val poolState = chainClient.getPoolState(strategy.currentTokenId)
@@ -150,7 +150,8 @@ fun Application.configureRouting(
                     // Use actual deposited amounts from IncreaseLiquidity event if available,
                     // falling back to the user's intent. This prevents day-0 IL from appearing
                     // due to Uniswap returning dust that didn't fit the tick ratio.
-                    val ethPrice = poolState.price.toDoubleOrNull() ?: 0.0
+                    val HALF_UP = java.math.RoundingMode.HALF_UP
+                    val ethPriceBD = poolState.price.toBigDecimalOrNull() ?: java.math.BigDecimal.ZERO
                     val initialToken0 = mintResult.amount0 ?: runCatching {
                         java.math.BigDecimal(req.ethAmount)
                             .multiply(java.math.BigDecimal.TEN.pow(poolState.decimals0))
@@ -161,21 +162,21 @@ fun Application.configureRouting(
                             .multiply(java.math.BigDecimal.TEN.pow(poolState.decimals1))
                             .toBigInteger().toString()
                     }.getOrNull()
-                    val initialValueUsd = if (mintResult.amount0 != null && mintResult.amount1 != null) {
-                        val t0 = mintResult.amount0.toBigIntegerOrNull()?.toBigDecimal()
-                            ?.divide(java.math.BigDecimal.TEN.pow(poolState.decimals0), poolState.decimals0, java.math.RoundingMode.HALF_UP)?.toDouble() ?: 0.0
-                        val t1 = mintResult.amount1.toBigIntegerOrNull()?.toBigDecimal()
-                            ?.divide(java.math.BigDecimal.TEN.pow(poolState.decimals1), poolState.decimals1, java.math.RoundingMode.HALF_UP)?.toDouble() ?: 0.0
+                    val initialValueUsd: java.math.BigDecimal? = if (mintResult.amount0 != null && mintResult.amount1 != null) {
+                        val t0 = (mintResult.amount0.toBigIntegerOrNull() ?: java.math.BigInteger.ZERO).toBigDecimal()
+                            .divide(java.math.BigDecimal.TEN.pow(poolState.decimals0), poolState.decimals0, HALF_UP)
+                        val t1 = (mintResult.amount1.toBigIntegerOrNull() ?: java.math.BigInteger.ZERO).toBigDecimal()
+                            .divide(java.math.BigDecimal.TEN.pow(poolState.decimals1), poolState.decimals1, HALF_UP)
                         // Include leftover tokens that didn't fit into the LP — they are part of
                         // the user's true initial contribution and must be in the baseline.
-                        val pending0 = (mintResult.leftoverToken0 ?: "0").toBigIntegerOrNull()?.toBigDecimal()
-                            ?.divide(java.math.BigDecimal.TEN.pow(poolState.decimals0), poolState.decimals0, java.math.RoundingMode.HALF_UP)?.toDouble() ?: 0.0
-                        val pending1 = (mintResult.leftoverToken1 ?: "0").toBigIntegerOrNull()?.toBigDecimal()
-                            ?.divide(java.math.BigDecimal.TEN.pow(poolState.decimals1), poolState.decimals1, java.math.RoundingMode.HALF_UP)?.toDouble() ?: 0.0
-                        (t0 + pending0) * ethPrice + (t1 + pending1)
+                        val pending0 = ((mintResult.leftoverToken0 ?: "0").toBigIntegerOrNull() ?: java.math.BigInteger.ZERO).toBigDecimal()
+                            .divide(java.math.BigDecimal.TEN.pow(poolState.decimals0), poolState.decimals0, HALF_UP)
+                        val pending1 = ((mintResult.leftoverToken1 ?: "0").toBigIntegerOrNull() ?: java.math.BigInteger.ZERO).toBigDecimal()
+                            .divide(java.math.BigDecimal.TEN.pow(poolState.decimals1), poolState.decimals1, HALF_UP)
+                        t0.add(pending0).multiply(ethPriceBD).add(t1.add(pending1)).setScale(2, HALF_UP)
                     } else {
-                        (req.ethAmount.toDoubleOrNull() ?: 0.0) * ethPrice +
-                            (req.usdcAmount.toDoubleOrNull() ?: 0.0)
+                        java.math.BigDecimal(req.ethAmount).multiply(ethPriceBD)
+                            .add(java.math.BigDecimal(req.usdcAmount)).setScale(2, HALF_UP)
                     }
 
                     try {
@@ -194,13 +195,12 @@ fun Application.configureRouting(
                             initialToken0Amount = initialToken0,
                             initialToken1Amount = initialToken1,
                             initialValueUsd = initialValueUsd,
-                            openEthPriceUsd = ethPrice,
+                            openEthPriceUsd = ethPriceBD,
                             pendingToken0 = mintResult.leftoverToken0 ?: "0",
                             pendingToken1 = mintResult.leftoverToken1 ?: "0",
                         )
 
-                        val mintEthPrice = java.math.BigDecimal(ethPrice.toString()).setScale(8, java.math.RoundingMode.HALF_UP)
-                        strategyService.recordStartStrategy(strategy.id, mintResult, mintEthPrice)
+                        strategyService.recordStartStrategy(strategy.id, mintResult, ethPriceBD.setScale(8, HALF_UP))
 
                         scheduler.start(strategy)
                         telegram.sendAlert("Strategy <b>${strategy.name}</b> started! Position #${mintResult.tokenId} minted.")

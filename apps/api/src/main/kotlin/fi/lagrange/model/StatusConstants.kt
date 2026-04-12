@@ -1,15 +1,21 @@
 package fi.lagrange.model
 
-object StrategyStatus {
-    const val ACTIVE           = "ACTIVE"
-    const val INITIATING       = "INITIATING"
-    const val STOPPED_MANUALLY = "STOPPED_MANUALLY"
-    const val STOPPED_ON_ERROR = "STOPPED_ON_ERROR"
+enum class StrategyStatus(val value: String) {
+    ACTIVE("ACTIVE"),
+    INITIATING("INITIATING"),
+    STOPPED_MANUALLY("STOPPED_MANUALLY"),
+    STOPPED_ON_ERROR("STOPPED_ON_ERROR");
+    companion object {
+        fun fromValue(s: String): StrategyStatus = entries.first { it.value == s }
+    }
 }
 
-object EventStatus {
-    const val PENDING     = "pending"
-    const val IN_PROGRESS = "in_progress"
-    const val SUCCESS     = "success"
-    const val FAILED      = "failed"
+enum class EventStatus(val value: String) {
+    PENDING("pending"),
+    IN_PROGRESS("in_progress"),
+    SUCCESS("success"),
+    FAILED("failed");
+    companion object {
+        fun fromValue(s: String): EventStatus = entries.first { it.value == s }
+    }
 }

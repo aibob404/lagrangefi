@@ -1,6 +1,7 @@
 package fi.lagrange.strategy
 
 import fi.lagrange.model.Strategies
+import fi.lagrange.model.StrategyStatus
 import fi.lagrange.services.ChainClient
 import fi.lagrange.services.StrategyRecord
 import fi.lagrange.services.StrategyService
@@ -33,7 +34,7 @@ class StrategyScheduler(
     fun loadAndStartAll() {
         val strategies = transaction {
             Strategies.selectAll()
-                .where { Strategies.status eq "ACTIVE" }
+                .where { Strategies.status eq StrategyStatus.ACTIVE.value }
                 .map { row -> rowToRecord(row) }
         }
         strategies.forEach { start(it) }
@@ -67,7 +68,7 @@ class StrategyScheduler(
     private suspend fun executeOnce(strategyId: Int) {
         val strategy = transaction {
             Strategies.selectAll()
-                .where { (Strategies.id eq strategyId) and (Strategies.status eq "ACTIVE") }
+                .where { (Strategies.id eq strategyId) and (Strategies.status eq StrategyStatus.ACTIVE.value) }
                 .firstOrNull()?.let { row -> rowToRecord(row) }
         }
 

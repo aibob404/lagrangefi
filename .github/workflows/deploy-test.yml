@@ -8,7 +8,7 @@ env:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, k3s]
     steps:
       - uses: actions/checkout@v4
 
@@ -23,35 +23,17 @@ jobs:
           echo "Deploying branch=${{ github.ref_name }} tag=$TAG"
           grep newTag k8s/overlays/test/kustomization.yaml
 
-      - name: Generate manifests
-        run: kubectl kustomize k8s/overlays/test > deploy.yaml
-
-      - name: Copy manifests to cluster
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          password: ${{ secrets.SSH_PASSWORD }}
-          source: deploy.yaml
-          target: /tmp/
-
       - name: Apply to cluster and wait for rollout
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          password: ${{ secrets.SSH_PASSWORD }}
-          script_stop: true
-          script: |
-            echo "==> Applying manifests (branch=${{ github.ref_name }} sha=${{ steps.sha.outputs.short }})"
-            kubectl apply -f /tmp/deploy.yaml
+        run: |
+          echo "==> Applying manifests (branch=${{ github.ref_name }} sha=${{ steps.sha.outputs.short }})"
+          kubectl kustomize k8s/overlays/test | kubectl apply -f - -n test
 
-            echo "==> Waiting for rollouts"
-            for dep in chain api web; do
-              kubectl rollout status deployment/$dep -n test --timeout=120s \
-                && echo "$dep: OK" \
-                || echo "$dep: rollout timed out (check pod logs)"
-            done
+          echo "==> Waiting for rollouts"
+          for dep in chain api web; do
+            kubectl rollout status deployment/$dep -n test --timeout=120s \
+              && echo "$dep: OK" \
+              || echo "$dep: rollout timed out (check pod logs)"
+          done
 
-            echo "==> Pods"
-            kubectl get pods -n test
+          echo "==> Pods"
+          kubectl get pods -n test

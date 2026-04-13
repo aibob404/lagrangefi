@@ -26,9 +26,14 @@ class UniswapStrategy(
 ) {
     private val log = LoggerFactory.getLogger(UniswapStrategy::class.java)
 
-    suspend fun execute(strategy: StrategyRecord, walletPhrase: String) {
+    /**
+     * Executes one rebalance check/cycle for a single strategy.
+     * Returns true if the tick is complete (in range, succeeded, or timed out),
+     * false if the rebalance failed and the caller should retry immediately.
+     */
+    suspend fun execute(strategy: StrategyRecord, walletPhrase: String): Boolean {
         log.debug("Checking strategy=${strategy.id} user=${strategy.userId} tokenId=${strategy.currentTokenId}")
-        val poolState = fetchStateOrSkip(strategy) ?: return
+        val poolState = fetchStateOrSkip(strategy) ?: return true
 
         val (newTickLower, newTickUpper) = calcTickRange(poolState.tick, strategy.fee, strategy.rangePercent)
         val idempotencyKey = UUID.randomUUID().toString()
@@ -49,13 +54,16 @@ class UniswapStrategy(
                 token1            = strategy.token1,
                 fee               = strategy.fee,
             )
-            if (result.success) {
+            return if (result.success) {
                 onRebalanceSuccess(strategy, result, eventId, ethPrice, newTickLower, newTickUpper)
+                true
             } else {
                 onRebalanceFailed(strategy, result, eventId, ethPrice)
+                false
             }
         } catch (e: Exception) {
             onRebalanceException(strategy, eventId, e)
+            return true  // timed out: chain may still be executing, do not retry
         }
     }
 

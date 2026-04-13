@@ -27,6 +27,10 @@ class StrategyScheduler(
     private val jobs     = ConcurrentHashMap<Int, Timer>()
     private val executor = UniswapStrategy(chainClient, telegram, strategyService)
 
+    companion object {
+        private const val MAX_REBALANCE_ATTEMPTS = 10
+    }
+
     /** Called at startup — load all active strategies from DB and start their timers. */
     fun loadAndStartAll() {
         val strategies = strategyRepo.findAllActive()
@@ -62,16 +66,26 @@ class StrategyScheduler(
     }
 
     private suspend fun executeOnce(strategyId: Int) {
-        val strategy = strategyRepo.findActiveById(strategyId)
-        if (strategy == null) {
-            stop(strategyId)
-            return
+        for (attempt in 1..MAX_REBALANCE_ATTEMPTS) {
+            val strategy = strategyRepo.findActiveById(strategyId)
+            if (strategy == null) {
+                stop(strategyId)
+                return
+            }
+            val walletPhrase = walletService.getDecryptedPhrase(strategy.userId)
+            if (walletPhrase == null) {
+                log.warn("No wallet configured for user=${strategy.userId} (strategy=$strategyId). Skipping tick.")
+                return
+            }
+            val done = executor.execute(strategy, walletPhrase)
+            if (done) return
+            if (attempt == MAX_REBALANCE_ATTEMPTS) {
+                log.warn("Strategy=$strategyId: $MAX_REBALANCE_ATTEMPTS rebalance attempts all failed this tick — giving up until next poll")
+                telegram.sendAlert(
+                    "[${strategy.name}] (id=${strategy.id}) Rebalance failed $MAX_REBALANCE_ATTEMPTS times in a row this tick. " +
+                    "Position #${strategy.currentTokenId} may be out of range. Retrying at next poll interval."
+                )
+            }
         }
-        val walletPhrase = walletService.getDecryptedPhrase(strategy.userId)
-        if (walletPhrase == null) {
-            log.warn("No wallet configured for user=${strategy.userId} (strategy=$strategyId). Skipping tick.")
-            return
-        }
-        executor.execute(strategy, walletPhrase)
     }
 }

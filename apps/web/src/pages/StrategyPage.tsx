@@ -1630,10 +1630,6 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
 
     const unclaimed = pos ? computeUnclaimedFees(pos, ethPrice, dec0, dec1) : null
 
-    const rebalanceEvents = (rebalances[s.id] ?? [])
-      .filter(r => r.action === 'REBALANCE')
-      .sort((a, b) => new Date(b.triggeredAt).getTime() - new Date(a.triggeredAt).getTime())
-
     const rangeBar = (pool && pos) ? (() => {
       const pad = (pos.tickUpper - pos.tickLower) * 0.2
       const min = pos.tickLower - pad, max = pos.tickUpper + pad, total = max - min

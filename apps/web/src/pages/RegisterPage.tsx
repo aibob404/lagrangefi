@@ -36,27 +36,27 @@ export default function RegisterPage() {
     <div className="min-h-screen flex items-center justify-center px-4">
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
-          <div className="w-12 h-12 bg-gray-900 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-sm">
-            <span className="text-white font-bold text-xl">Δ</span>
+          <div className="w-12 h-12 rounded-2xl flex items-center justify-center mx-auto mb-4 bg-gradient-to-br from-emerald-400 to-emerald-600 shadow-[0_0_24px_rgba(16,185,129,0.35)]">
+            <span className="text-slate-950 font-bold text-xl leading-none">Δ</span>
           </div>
-          <h1 className="text-2xl font-bold text-gray-900">lagrangefi</h1>
-          <p className="text-sm text-gray-500 mt-1">Create your account</p>
+          <h1 className="text-2xl font-bold text-slate-100 tracking-tight">lagrangefi</h1>
+          <p className="text-sm text-slate-400 mt-1">Create your account</p>
         </div>
 
-        <div className="bg-white/60 backdrop-blur-sm rounded-2xl shadow-sm border border-white/80 p-6">
-          <h2 className="text-base font-semibold text-gray-900 mb-5">Get started</h2>
+        <div className="bg-slate-800/70 backdrop-blur-md rounded-xl shadow-lg shadow-black/20 border border-slate-700 p-6">
+          <h2 className="text-base font-semibold text-slate-100 mb-5">Get started</h2>
 
           {error && (
-            <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2.5 mb-4">
+            <div className="bg-rose-500/10 border border-rose-500/30 text-rose-300 text-sm rounded-lg px-3 py-2.5 mb-4">
               {error}
             </div>
           )}
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1.5">Username</label>
+              <label className="block text-xs font-medium text-slate-400 mb-1.5">Username</label>
               <input
-                className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:border-blue-500 focus:bg-white transition-colors"
+                className="w-full bg-slate-700/60 border border-slate-600 rounded-lg px-3 py-2.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:bg-slate-700 transition-colors"
                 value={username}
                 onChange={e => setUsername(e.target.value)}
                 placeholder="username"
@@ -68,10 +68,10 @@ export default function RegisterPage() {
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1.5">Password</label>
+              <label className="block text-xs font-medium text-slate-400 mb-1.5">Password</label>
               <input
                 type="password"
-                className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:border-blue-500 focus:bg-white transition-colors"
+                className="w-full bg-slate-700/60 border border-slate-600 rounded-lg px-3 py-2.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:bg-slate-700 transition-colors"
                 value={password}
                 onChange={e => setPassword(e.target.value)}
                 placeholder="min 8 characters"
@@ -82,10 +82,10 @@ export default function RegisterPage() {
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1.5">Confirm password</label>
+              <label className="block text-xs font-medium text-slate-400 mb-1.5">Confirm password</label>
               <input
                 type="password"
-                className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:border-blue-500 focus:bg-white transition-colors"
+                className="w-full bg-slate-700/60 border border-slate-600 rounded-lg px-3 py-2.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:bg-slate-700 transition-colors"
                 value={confirm}
                 onChange={e => setConfirm(e.target.value)}
                 placeholder="••••••••"
@@ -97,15 +97,15 @@ export default function RegisterPage() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full bg-gray-900 hover:bg-gray-800 disabled:opacity-50 text-white text-sm font-semibold py-2.5 rounded-lg transition-colors"
+              className="w-full bg-emerald-400 hover:bg-emerald-300 disabled:opacity-50 disabled:hover:bg-emerald-400 text-slate-950 text-sm font-semibold py-2.5 rounded-lg transition-colors"
             >
               {loading ? 'Creating account…' : 'Create account'}
             </button>
           </form>
 
-          <p className="text-center text-xs text-gray-500 mt-4">
+          <p className="text-center text-xs text-slate-400 mt-4">
             Already have an account?{' '}
-            <Link to="/login" className="text-blue-600 hover:text-blue-700 font-medium">Sign in</Link>
+            <Link to="/login" className="text-sky-400 hover:text-sky-300 font-medium">Sign in</Link>
           </p>
         </div>
       </div>

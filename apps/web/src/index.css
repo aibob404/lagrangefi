@@ -4,13 +4,30 @@
 
 body {
   margin: 0;
-  background: linear-gradient(145deg, #dde8f0 0%, #e8e4f0 40%, #d8e8e4 100%);
+  background:
+    radial-gradient(1200px 800px at 85% -10%, rgba(16, 185, 129, 0.05), transparent 60%),
+    radial-gradient(1000px 700px at -10% 110%, rgba(56, 189, 248, 0.04), transparent 60%),
+    #1a1d24;
   min-height: 100vh;
-  color: #111827;
+  color: #e2e8f0;
   font-family: 'Inter', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 
 #root {
   min-height: 100vh;
+}
+
+@keyframes fadein {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Subtle autofill color override so inputs don't flash white on dark */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus {
+  -webkit-text-fill-color: #e2e8f0;
+  -webkit-box-shadow: 0 0 0px 1000px #1e293b inset;
+  transition: background-color 9999s ease-in-out 0s;
 }

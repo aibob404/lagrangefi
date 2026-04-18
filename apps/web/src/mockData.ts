@@ -72,8 +72,8 @@ export const MOCK_POSITION: Position = {
   token0: '0xaf88d065e77c8cc2239327c5edb3a432268e5831',
   token1: '0x82af49447d8a07e3bd95bd0d56f35241523fbab1',
   fee: 500,
-  tickLower: -200820,
-  tickUpper: -199820,
+  tickLower: 199820,
+  tickUpper: 200820,
   liquidity: '8420000000000000',
   tokensOwed0: '1240000',         // 1.24 USDC unclaimed
   tokensOwed1: '520000000000000', // 0.00052 WETH unclaimed
@@ -85,7 +85,7 @@ export const MOCK_POSITION: Position = {
 
 export const MOCK_POOL_STATE: PoolState = {
   sqrtPriceX96: '3961408125713216879677197516800',
-  tick: -200312,
+  tick: 200312,
   price: '2032.85',
   decimals0: 6,
   decimals1: 18,
@@ -110,8 +110,8 @@ export const MOCK_REBALANCES: Record<number, StrategyEvent[]> = {
       rebalanceDetails: {
         oldNftTokenId: '811990',
         newNftTokenId: '812045',
-        newTickLower: -200820,
-        newTickUpper: -199820,
+        newTickLower: 199820,
+        newTickUpper: 200820,
         feesCollectedToken0: '1850000',         // 1.85 USDC
         feesCollectedToken1: '920000000000000',  // 0.00092 WETH
         gasUsedWei: 980_000_000_000_000,
@@ -155,8 +155,8 @@ export const MOCK_REBALANCES: Record<number, StrategyEvent[]> = {
       rebalanceDetails: {
         oldNftTokenId: '811931',
         newNftTokenId: '811990',
-        newTickLower: -201020,
-        newTickUpper: -200020,
+        newTickLower: 200020,
+        newTickUpper: 201020,
         feesCollectedToken0: '1420000',
         feesCollectedToken1: '680000000000000',
         gasUsedWei: 950_000_000_000_000,

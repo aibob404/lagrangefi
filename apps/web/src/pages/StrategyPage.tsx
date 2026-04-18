@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, type FormEvent } from 'react'
+import React, { useState, useEffect, useRef, useCallback, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import {
   fetchStrategies, startStrategy, createStrategy,
@@ -73,13 +73,20 @@ function formatEventDate(iso: string) {
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
 }
 
+function computeUnclaimedFees(pos: Position, ethPrice: number, dec0: number, dec1: number) {
+  if (!pos.tokensOwed0 || !pos.tokensOwed1) return null
+  const t0 = Number(BigInt(pos.tokensOwed0)) / Math.pow(10, dec0)
+  const t1 = Number(BigInt(pos.tokensOwed1)) / Math.pow(10, dec1)
+  return { t0, t1, usd: t0 * ethPrice + t1 }
+}
+
 // ── Sub-components ───────────────────────────────────────────────────────────
 
 const STATUS_STYLES: Record<string, string> = {
-  ACTIVE:           'bg-emerald-500/10 text-emerald-300 border border-emerald-500/30',
-  INITIATING:       'bg-sky-500/10 text-sky-300 border border-sky-500/30',
-  STOPPED_MANUALLY: 'bg-slate-700 text-slate-400 border border-slate-600',
-  STOPPED_ON_ERROR: 'bg-rose-500/10 text-rose-300 border border-rose-500/30',
+  ACTIVE:           'bg-emerald-50 text-emerald-700 border border-emerald-200',
+  INITIATING:       'bg-blue-50 text-blue-700 border border-blue-200',
+  STOPPED_MANUALLY: 'bg-gray-100 text-gray-500 border border-gray-200',
+  STOPPED_ON_ERROR: 'bg-red-50 text-red-600 border border-red-200',
 }
 const STATUS_LABELS: Record<string, string> = {
   ACTIVE:           'Active',
@@ -96,7 +103,7 @@ function StatusBadge({ status }: { status: string }) {
   return (
     <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold ${STATUS_STYLES[status] ?? STATUS_STYLES.STOPPED_MANUALLY}`}>
       {status === 'ACTIVE' && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />}
-      {status === 'INITIATING' && <span className="w-1.5 h-1.5 rounded-full bg-sky-400 animate-pulse" />}
+      {status === 'INITIATING' && <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />}
       {STATUS_LABELS[status] ?? status}
     </span>
   )
@@ -104,9 +111,9 @@ function StatusBadge({ status }: { status: string }) {
 
 function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <div className="flex justify-between items-center gap-4 py-1.5 px-2.5 rounded-lg hover:bg-slate-800/50 transition-colors">
-      <span className="text-xs font-medium text-slate-500 shrink-0">{label}</span>
-      <span className="text-xs font-semibold text-slate-100 font-mono text-right">{value}</span>
+    <div className="flex justify-between items-center gap-4 py-1.5 px-2.5 rounded-lg hover:bg-white/40 transition-colors">
+      <span className="text-xs font-medium text-gray-400 shrink-0">{label}</span>
+      <span className="text-xs font-semibold text-gray-800 font-mono text-right">{value}</span>
     </div>
   )
 }
@@ -116,7 +123,7 @@ function Tooltip({ tip, children }: { tip: string; children: React.ReactNode }) 
     <span className="relative group/tip inline-block cursor-help">
       <span className="underline decoration-dotted decoration-gray-400 underline-offset-2">{children}</span>
       <span className="pointer-events-none absolute bottom-full left-0 mb-1.5 hidden group-hover/tip:block
-                       bg-emerald-400 text-slate-950 text-xs font-mono rounded-lg px-2.5 py-1.5 whitespace-nowrap z-50 shadow-lg">
+                       bg-gray-900 text-white text-xs font-mono rounded-lg px-2.5 py-1.5 whitespace-nowrap z-50 shadow-lg">
         {tip}
       </span>
     </span>
@@ -144,23 +151,23 @@ function PriceRangeBar({ tick, tickLower, tickUpper, decimals0, decimals1 }: {
   const cur = tickToPrice(tick, decimals0, decimals1)
   return (
     <div className="mt-3">
-      <div className="flex justify-between text-xs text-slate-500 mb-1.5">
+      <div className="flex justify-between text-xs text-gray-400 mb-1.5">
         <span>${formatPrice(lo)}</span>
-        <span className="font-medium text-slate-200">Now: ${formatPrice(cur)}</span>
+        <span className="font-medium text-gray-700">Now: ${formatPrice(cur)}</span>
         <span>${formatPrice(hi)}</span>
       </div>
-      <div className="relative h-3 bg-slate-700 rounded-full">
-        <div className={`absolute h-full rounded-full ${inRange ? 'bg-emerald-400' : 'bg-rose-400'}`}
+      <div className="relative h-3 bg-gray-300 rounded-full">
+        <div className={`absolute h-full rounded-full ${inRange ? 'bg-emerald-400' : 'bg-red-400'}`}
           style={{ left: `${loPct}%`, width: `${hiPct - loPct}%` }} />
-        <div className={`absolute top-1/2 -translate-y-1/2 w-1 h-5 rounded-full ${inRange ? 'bg-emerald-600' : 'bg-rose-500'}`}
+        <div className={`absolute top-1/2 -translate-y-1/2 w-1 h-5 rounded-full ${inRange ? 'bg-emerald-600' : 'bg-red-600'}`}
           style={{ left: `${curPct}%` }} />
       </div>
       <div className="flex justify-between text-xs mt-1.5">
-        <span className="text-slate-500">Lower bound</span>
-        <span className={`font-semibold ${inRange ? 'text-emerald-400' : 'text-rose-400'}`}>
+        <span className="text-gray-400">Lower bound</span>
+        <span className={`font-semibold ${inRange ? 'text-emerald-600' : 'text-red-500'}`}>
           {inRange ? 'In Range' : 'Out of Range'}
         </span>
-        <span className="text-slate-500">Upper bound</span>
+        <span className="text-gray-400">Upper bound</span>
       </div>
     </div>
   )
@@ -172,18 +179,18 @@ function TokenRatioBar({ token0Raw, token1Raw, dec0, dec1, label0, label1, ethPr
 }) {
   const r = computeTokenRatio(token0Raw, token1Raw, dec0, dec1, label0, ethPrice)
   return (
-    <div className="mt-3 pt-3 border-t border-slate-700">
-      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-2">Token Ratio</p>
+    <div className="mt-3 pt-3 border-t border-white/50">
+      <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2">Token Ratio</p>
       <div className="flex items-center justify-between text-xs mb-1.5">
-        <span className="font-semibold text-sky-400">{label0} {r.token0Pct.toFixed(0)}%</span>
-        <span className="text-[10px] text-slate-500">{formatUsd(r.totalUsd)}</span>
-        <span className="font-semibold text-amber-300">{label1} {r.token1Pct.toFixed(0)}%</span>
+        <span className="font-semibold text-blue-600">{label0} {r.token0Pct.toFixed(0)}%</span>
+        <span className="text-[10px] text-gray-400">{formatUsd(r.totalUsd)}</span>
+        <span className="font-semibold text-amber-600">{label1} {r.token1Pct.toFixed(0)}%</span>
       </div>
-      <div className="h-2 rounded-full overflow-hidden flex bg-slate-700">
-        <div className="h-full bg-sky-400 transition-all duration-500" style={{ width: `${r.token0Pct}%` }} />
-        <div className="h-full bg-amber-400 flex-1" />
+      <div className="h-2 rounded-full overflow-hidden flex bg-gray-100">
+        <div className="h-full bg-blue-400 transition-all duration-500" style={{ width: `${r.token0Pct}%` }} />
+        <div className="h-full bg-amber-300 flex-1" />
       </div>
-      <div className="flex justify-between text-[10px] text-slate-500 mt-1">
+      <div className="flex justify-between text-[10px] text-gray-400 mt-1">
         <span>{formatUsd(r.token0Usd)}</span>
         <span>{formatUsd(r.token1Usd)}</span>
       </div>
@@ -198,19 +205,19 @@ function TxList({ hashes, steps }: { hashes: string[]; steps?: string[] | null }
     <div className="space-y-2">
       {hashes.map((h, i) => (
         <div key={h} className="flex items-center justify-between gap-3">
-          <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide shrink-0 w-28 flex items-center gap-1.5">
-            <span className="text-[9px] font-bold text-slate-600 tabular-nums">#{i + 1}</span>
+          <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide shrink-0 w-28 flex items-center gap-1.5">
+            <span className="text-[9px] font-bold text-gray-300 tabular-nums">#{i + 1}</span>
             {steps?.[i] ?? `Tx ${i + 1}`}
           </span>
           <div className="flex items-center gap-1.5 min-w-0">
             <Tooltip tip={h}>
               <a href={`https://arbiscan.io/tx/${h}`} target="_blank" rel="noopener noreferrer"
-                className="text-sky-400 hover:text-sky-300 font-mono text-xs underline underline-offset-2">
+                className="text-blue-600 hover:text-blue-700 font-mono text-xs underline underline-offset-2">
                 {shortHash(h)}
               </a>
             </Tooltip>
             <a href={`https://arbiscan.io/tx/${h}`} target="_blank" rel="noopener noreferrer"
-              className="text-slate-500 hover:text-slate-300 shrink-0">
+              className="text-gray-400 hover:text-gray-600 shrink-0">
               <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
               </svg>
@@ -244,24 +251,24 @@ function TimelineEventRow({
   return (
     <div className="relative pl-8">
       {!isLast && (
-        <div className="absolute left-3.5 top-10 bottom-0 w-px bg-gradient-to-b from-slate-700 to-slate-700" />
+        <div className="absolute left-3.5 top-10 bottom-0 w-px bg-gradient-to-b from-gray-200 to-gray-100" />
       )}
-      <div className={`absolute left-2 top-4 w-3 h-3 rounded-full border-2 border-slate-700 shadow-sm ${dotColor}`} />
+      <div className={`absolute left-2 top-4 w-3 h-3 rounded-full border-2 border-white shadow-sm ${dotColor}`} />
 
       <div
-        className="flex items-center gap-3 cursor-pointer py-3 px-3 rounded-xl hover:bg-slate-800/50 transition-colors -mx-1"
+        className="flex items-center gap-3 cursor-pointer py-3 px-3 rounded-xl hover:bg-white/40 transition-colors -mx-1"
         onClick={onToggle}
       >
         <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${iconBg}`}>
           {icon}
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-semibold text-slate-100 leading-tight">{label}</p>
-          {subtitle && <p className="text-xs text-slate-500 mt-0.5 truncate">{subtitle}</p>}
+          <p className="text-sm font-semibold text-gray-900 leading-tight">{label}</p>
+          {subtitle && <p className="text-xs text-gray-400 mt-0.5 truncate">{subtitle}</p>}
         </div>
-        <span className="text-[11px] text-slate-500 shrink-0 hidden sm:block whitespace-nowrap">{date}</span>
+        <span className="text-[11px] text-gray-400 shrink-0 hidden sm:block whitespace-nowrap">{date}</span>
         <span className={`text-sm font-bold font-mono shrink-0 ${metricClass}`}>{metric}</span>
-        <svg className={`w-4 h-4 text-slate-600 transition-transform duration-200 shrink-0 ${expanded ? 'rotate-180' : ''}`}
+        <svg className={`w-4 h-4 text-gray-300 transition-transform duration-200 shrink-0 ${expanded ? 'rotate-180' : ''}`}
           fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
           <polyline points="6 9 12 15 18 9" />
         </svg>
@@ -284,30 +291,30 @@ function OpenedEvent({ strategy, openEvent, dec0, dec1, label0, label1, expanded
 
   return (
     <TimelineEventRow
-      iconBg="bg-emerald-500/10 border border-emerald-500/30"
-      icon={<svg className="w-4 h-4 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M5 10l7-7m0 0l7 7m-7-7v18"/></svg>}
+      iconBg="bg-emerald-50 border border-emerald-200"
+      icon={<svg className="w-4 h-4 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M5 10l7-7m0 0l7 7m-7-7v18"/></svg>}
       dotColor="bg-emerald-400"
       label="Strategy Opened"
       subtitle={`NFT #${strategy.currentTokenId} · ${tokenLabel(strategy.token0)}/${tokenLabel(strategy.token1)} · ${feeLabel(strategy.fee)}`}
       date={formatEventDate(strategy.createdAt)}
       metric={depositUsd != null ? `Deposited ${formatUsd(depositUsd)}` : 'Deposited'}
-      metricClass="text-slate-400"
+      metricClass="text-gray-500"
       expanded={expanded}
       onToggle={onToggle}
       isLast={isLast}
     >
       <div className="space-y-2 mt-2">
-        <div className="bg-slate-800/70 border border-slate-700 rounded-xl p-4 space-y-2">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-3">
+        <div className="bg-white/60 border border-white/80 rounded-xl p-4 space-y-2">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-3">
             Deposit{strategy.openEthPriceUsd ? ` · ETH = ${formatUsd(strategy.openEthPriceUsd)}` : ''}
           </p>
           {strategy.initialToken0Amount && (
             <div className="flex justify-between items-center">
-              <span className="text-xs text-slate-300">
+              <span className="text-xs text-gray-600">
                 <RawAmount amount={strategy.initialToken0Amount} decimals={dec0} label={label0} />
               </span>
               {strategy.openEthPriceUsd && (
-                <span className="text-xs font-semibold font-mono text-slate-100">
+                <span className="text-xs font-semibold font-mono text-gray-800">
                   {formatUsd(rawToFloat(strategy.initialToken0Amount, dec0) *
                     (label0.includes('WETH') ? strategy.openEthPriceUsd : 1))}
                 </span>
@@ -316,11 +323,11 @@ function OpenedEvent({ strategy, openEvent, dec0, dec1, label0, label1, expanded
           )}
           {strategy.initialToken1Amount && (
             <div className="flex justify-between items-center">
-              <span className="text-xs text-slate-300">
+              <span className="text-xs text-gray-600">
                 <RawAmount amount={strategy.initialToken1Amount} decimals={dec1} label={label1} />
               </span>
               {strategy.openEthPriceUsd && (
-                <span className="text-xs font-semibold font-mono text-slate-100">
+                <span className="text-xs font-semibold font-mono text-gray-800">
                   {formatUsd(rawToFloat(strategy.initialToken1Amount, dec1) *
                     (label0.includes('WETH') ? 1 : strategy.openEthPriceUsd))}
                 </span>
@@ -328,16 +335,16 @@ function OpenedEvent({ strategy, openEvent, dec0, dec1, label0, label1, expanded
             </div>
           )}
           {depositUsd != null && (
-            <div className="flex justify-between items-center pt-2 border-t border-slate-700 mt-1">
-              <span className="text-xs font-semibold text-slate-300">Total deposited</span>
-              <span className="text-sm font-bold font-mono text-slate-100">{formatUsd(depositUsd)}</span>
+            <div className="flex justify-between items-center pt-2 border-t border-gray-100 mt-1">
+              <span className="text-xs font-semibold text-gray-600">Total deposited</span>
+              <span className="text-sm font-bold font-mono text-gray-900">{formatUsd(depositUsd)}</span>
             </div>
           )}
         </div>
 
         {openEvent && openEvent.transactions.length > 0 && (
-          <div className="bg-slate-800/70 border border-slate-700 rounded-xl p-4">
-            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-3">Transactions</p>
+          <div className="bg-white/60 border border-white/80 rounded-xl p-4">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-3">Transactions</p>
             <TxList
               hashes={openEvent.transactions.map(t => t.txHash)}
               steps={openEvent.transactions.map(t => t.action)}
@@ -362,12 +369,12 @@ function RebalanceEventRow({ event, index, dec0, dec1, label0, label1, expanded,
   if (event.status === 'failed') {
     const gasUsd = d?.gasUsedWei != null && ethPrice > 0 ? (d.gasUsedWei / 1e18) * ethPrice : null
     metric = gasUsd != null ? `−${formatUsd(gasUsd)} gas` : 'Failed'
-    metricClass = 'text-rose-400'
+    metricClass = 'text-red-500'
   } else if (profit) {
     metric = (profit.netUsd >= 0 ? '+' : '') + formatUsd(profit.netUsd)
-    metricClass = profit.isProfitable ? 'text-emerald-400' : 'text-rose-400'
+    metricClass = profit.isProfitable ? 'text-emerald-600' : 'text-red-500'
   } else {
-    metric = '—'; metricClass = 'text-slate-500'
+    metric = '—'; metricClass = 'text-gray-400'
   }
 
   const hashes = event.transactions.map(t => t.txHash)
@@ -394,11 +401,11 @@ function RebalanceEventRow({ event, index, dec0, dec1, label0, label1, expanded,
 
   return (
     <TimelineEventRow
-      iconBg={event.status === 'failed' ? 'bg-rose-500/10 border border-rose-500/30' : 'bg-sky-500/10 border border-sky-500/30'}
+      iconBg={event.status === 'failed' ? 'bg-red-50 border border-red-200' : 'bg-blue-50 border border-blue-200'}
       icon={event.status === 'failed'
-        ? <svg className="w-4 h-4 text-rose-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
-        : <svg className="w-4 h-4 text-sky-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>}
-      dotColor={event.status === 'failed' ? 'bg-rose-400' : profit?.isProfitable !== false ? 'bg-sky-400' : 'bg-amber-400'}
+        ? <svg className="w-4 h-4 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+        : <svg className="w-4 h-4 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>}
+      dotColor={event.status === 'failed' ? 'bg-red-400' : profit?.isProfitable !== false ? 'bg-blue-400' : 'bg-amber-400'}
       label={`Rebalance #${index}`}
       subtitle={event.status === 'failed'
         ? (event.errorMessage ?? 'Failed')
@@ -413,10 +420,10 @@ function RebalanceEventRow({ event, index, dec0, dec1, label0, label1, expanded,
     >
       <div className="space-y-2 mt-2">
         {event.status === 'failed' ? (
-          <div className="bg-rose-500/10 border border-rose-500/30 rounded-xl p-4">
-            <p className="text-xs font-semibold text-rose-300">Error: {event.errorMessage ?? 'Unknown error'}</p>
+          <div className="bg-red-50/60 border border-red-200/60 rounded-xl p-4">
+            <p className="text-xs font-semibold text-red-700">Error: {event.errorMessage ?? 'Unknown error'}</p>
             {d?.gasUsedWei != null && ethPrice > 0 && (
-              <p className="text-xs text-rose-400 mt-2">
+              <p className="text-xs text-red-500 mt-2">
                 Gas lost: {formatUsd((d.gasUsedWei / 1e18) * ethPrice)} ({weiToEth(d.gasUsedWei)} ETH @ ${ethPrice.toFixed(0)})
               </p>
             )}
@@ -426,22 +433,22 @@ function RebalanceEventRow({ event, index, dec0, dec1, label0, label1, expanded,
             {(posBefore || posAfter) && (
               <div className="grid grid-cols-2 gap-2">
                 {posBefore && (
-                  <div className="bg-slate-800/70 border border-slate-700 rounded-xl p-3">
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">Before</p>
-                    <p className="text-sm font-bold font-mono text-slate-200">{formatUsd(posBefore.usd)}</p>
-                    <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
-                      <RawAmount amount={d!.positionToken0Start!} decimals={dec0} label={label0} /><br/>
-                      <RawAmount amount={d!.positionToken1Start!} decimals={dec1} label={label1} />
+                  <div className="bg-white/60 border border-white/80 rounded-xl p-3">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1.5">Before</p>
+                    <p className="text-sm font-bold font-mono text-gray-700">{formatUsd(posBefore.usd)}</p>
+                    <p className="text-[11px] text-gray-400 mt-0.5 leading-relaxed">
+                      {posBefore.t0.toFixed(4)} {label0}<br/>
+                      {posBefore.t1.toFixed(2)} {label1}
                     </p>
                   </div>
                 )}
                 {posAfter && (
-                  <div className="bg-slate-800/70 border border-slate-700 rounded-xl p-3">
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">After</p>
-                    <p className="text-sm font-bold font-mono text-slate-200">{formatUsd(posAfter.usd)}</p>
-                    <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
-                      <RawAmount amount={d!.positionToken0End!} decimals={dec0} label={label0} /><br/>
-                      <RawAmount amount={d!.positionToken1End!} decimals={dec1} label={label1} />
+                  <div className="bg-white/60 border border-white/80 rounded-xl p-3">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1.5">After</p>
+                    <p className="text-sm font-bold font-mono text-gray-700">{formatUsd(posAfter.usd)}</p>
+                    <p className="text-[11px] text-gray-400 mt-0.5 leading-relaxed">
+                      {posAfter.t0.toFixed(4)} {label0}<br/>
+                      {posAfter.t1.toFixed(2)} {label1}
                     </p>
                   </div>
                 )}
@@ -449,16 +456,16 @@ function RebalanceEventRow({ event, index, dec0, dec1, label0, label1, expanded,
             )}
 
             {profit && (
-              <div className="bg-slate-800/70 border border-slate-700 rounded-xl p-3 space-y-1.5">
+              <div className="bg-white/60 border border-white/80 rounded-xl p-3 space-y-1.5">
                 <div className="flex justify-between items-start">
-                  <span className="text-xs text-emerald-300 flex items-center gap-1.5 mt-0.5">
+                  <span className="text-xs text-emerald-700 flex items-center gap-1.5 mt-0.5">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
                     Fees collected
                   </span>
                   <div className="text-right">
-                    <p className="text-xs font-bold font-mono text-emerald-400">+{formatUsd(profit.feesUsd)}</p>
+                    <p className="text-xs font-bold font-mono text-emerald-600">+{formatUsd(profit.feesUsd)}</p>
                     {d?.feesCollectedToken0 && (
-                      <p className="text-[10px] text-slate-500 font-mono mt-0.5">
+                      <p className="text-[10px] text-gray-400 font-mono mt-0.5">
                         <RawAmount amount={d.feesCollectedToken0} decimals={dec0} label={label0} />
                         {' + '}
                         <RawAmount amount={d.feesCollectedToken1 ?? '0'} decimals={dec1} label={label1} />
@@ -467,18 +474,18 @@ function RebalanceEventRow({ event, index, dec0, dec1, label0, label1, expanded,
                   </div>
                 </div>
                 <div className="flex justify-between items-center">
-                  <span className="text-xs text-rose-300 flex items-center gap-1.5">
-                    <span className="w-1.5 h-1.5 rounded-full bg-rose-400 shrink-0" />
+                  <span className="text-xs text-red-600 flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-red-400 shrink-0" />
                     Gas
                   </span>
-                  <span className="text-xs font-bold font-mono text-rose-400">
+                  <span className="text-xs font-bold font-mono text-red-500">
                     −{formatUsd(profit.gasUsd)}
-                    {d?.gasUsedWei != null && <span className="text-[10px] text-slate-500 ml-1">({weiToEth(d.gasUsedWei)} ETH)</span>}
+                    {d?.gasUsedWei != null && <span className="text-[10px] text-gray-400 ml-1">({weiToEth(d.gasUsedWei)} ETH)</span>}
                   </span>
                 </div>
-                <div className="flex justify-between items-center pt-1.5 border-t border-slate-700">
-                  <span className="text-xs font-semibold text-slate-300">Net this rebalance</span>
-                  <span className={`text-sm font-bold font-mono ${profit.isProfitable ? 'text-emerald-400' : 'text-rose-400'}`}>
+                <div className="flex justify-between items-center pt-1.5 border-t border-gray-100">
+                  <span className="text-xs font-semibold text-gray-600">Net this rebalance</span>
+                  <span className={`text-sm font-bold font-mono ${profit.isProfitable ? 'text-emerald-600' : 'text-red-500'}`}>
                     {profit.netUsd >= 0 ? '+' : ''}{formatUsd(profit.netUsd)}
                   </span>
                 </div>
@@ -497,33 +504,31 @@ function RebalanceEventRow({ event, index, dec0, dec1, label0, label1, expanded,
               const swapOut     = d.swapCostAmountOut ?? '0'
               const hasSwap     = d.swapCostAmountIn != null
 
-              const swapInLabel  = swapDir === 'oneForZero' ? label1 : label0
-              const swapInDec    = swapDir === 'oneForZero' ? dec1  : dec0
-              const swapOutLabel = swapDir === 'oneForZero' ? label0 : label1
-              const swapOutDec   = swapDir === 'oneForZero' ? dec0  : dec1
+              const swapInHuman  = swapDir === 'oneForZero'
+                ? (Number(BigInt(swapIn)) / 1e18).toFixed(4) + ' ' + (label1.includes('WETH') ? label1 : label0)
+                : (Number(BigInt(swapIn)) / 1e6).toFixed(2) + ' ' + (label0.includes('USDC') ? label0 : label1)
+              const swapOutHuman = swapDir === 'oneForZero'
+                ? (Number(BigInt(swapOut)) / 1e6).toFixed(2) + ' ' + (label0.includes('USDC') ? label0 : label1)
+                : (Number(BigInt(swapOut)) / 1e18).toFixed(4) + ' ' + (label1.includes('WETH') ? label1 : label0)
 
               const driftIsPositive = driftUsd >= 0
               const totalImpact = (hasSwap ? -Math.abs(swapCostUsd) : 0) + driftUsd
               const totalImpactPositive = totalImpact >= 0
 
               return (
-                <div className="bg-slate-800/70 border border-slate-700 rounded-xl p-3 space-y-1.5">
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-2">Execution Impact</p>
+                <div className="bg-white/60 border border-white/80 rounded-xl p-3 space-y-1.5">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2">Execution Impact</p>
 
                   {/* Swap cost */}
                   {hasSwap !== false && (
                     <div className="flex justify-between items-start">
-                      <span className="text-xs text-amber-300 flex items-center gap-1.5 mt-0.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" />
+                      <span className="text-xs text-orange-600 flex items-center gap-1.5 mt-0.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-orange-400 shrink-0" />
                         Swap cost
                       </span>
                       <div className="text-right">
-                        <p className="text-xs font-bold font-mono text-amber-400">−{formatUsd(Math.abs(swapCostUsd))}</p>
-                        <p className="text-[10px] text-slate-500 font-mono mt-0.5">
-                          <RawAmount amount={swapIn} decimals={swapInDec} label={swapInLabel} />
-                          {' → '}
-                          <RawAmount amount={swapOut} decimals={swapOutDec} label={swapOutLabel} />
-                        </p>
+                        <p className="text-xs font-bold font-mono text-orange-500">−{formatUsd(Math.abs(swapCostUsd))}</p>
+                        <p className="text-[10px] text-gray-400 font-mono mt-0.5">{swapInHuman} → {swapOutHuman}</p>
                       </div>
                     </div>
                   )}
@@ -531,28 +536,28 @@ function RebalanceEventRow({ event, index, dec0, dec1, label0, label1, expanded,
                   {/* Price drift */}
                   <div className="flex justify-between items-start">
                     <div>
-                      <span className="text-xs text-violet-400 flex items-center gap-1.5 mt-0.5">
+                      <span className="text-xs text-violet-600 flex items-center gap-1.5 mt-0.5">
                         <span className="w-1.5 h-1.5 rounded-full bg-violet-400 shrink-0" />
                         Price drift
                       </span>
-                      <p className="text-[10px] text-slate-500 font-mono mt-0.5 ml-3.5">
+                      <p className="text-[10px] text-gray-400 font-mono mt-0.5 ml-3.5">
                         ${formatPrice(pDecision)} → ${formatPrice(pEnd)}
                       </p>
                     </div>
                     <div className="text-right">
-                      <p className={`text-xs font-bold font-mono ${driftIsPositive ? 'text-emerald-400' : 'text-rose-400'}`}>
+                      <p className={`text-xs font-bold font-mono ${driftIsPositive ? 'text-emerald-600' : 'text-red-500'}`}>
                         {driftIsPositive ? '+' : ''}{formatUsd(driftUsd)}
                       </p>
-                      <p className={`text-[10px] font-mono mt-0.5 ${driftIsPositive ? 'text-emerald-400' : 'text-rose-400'}`}>
+                      <p className={`text-[10px] font-mono mt-0.5 ${driftIsPositive ? 'text-emerald-500' : 'text-red-400'}`}>
                         {driftIsPositive ? '+' : ''}{driftPct.toFixed(2)}%
                       </p>
                     </div>
                   </div>
 
                   {/* Total execution impact */}
-                  <div className="flex justify-between items-center pt-1.5 border-t border-slate-700">
-                    <span className="text-xs font-medium text-slate-400">Execution impact</span>
-                    <span className={`text-xs font-bold font-mono ${totalImpactPositive ? 'text-emerald-400' : 'text-rose-400'}`}>
+                  <div className="flex justify-between items-center pt-1.5 border-t border-gray-100">
+                    <span className="text-xs font-medium text-gray-500">Execution impact</span>
+                    <span className={`text-xs font-bold font-mono ${totalImpactPositive ? 'text-emerald-600' : 'text-red-500'}`}>
                       {totalImpactPositive ? '+' : ''}{formatUsd(totalImpact)}
                     </span>
                   </div>
@@ -564,21 +569,21 @@ function RebalanceEventRow({ event, index, dec0, dec1, label0, label1, expanded,
               const il = d.rebalancingDragUsd!
               const ahead = il <= 0
               return (
-                <div className={`bg-slate-800/70 border rounded-xl p-3 space-y-1.5 ${ahead ? 'border-emerald-500/20' : 'border-amber-500/20'}`}>
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-2">Rebalancing Drag</p>
+                <div className={`bg-white/60 border rounded-xl p-3 space-y-1.5 ${ahead ? 'border-emerald-100/80' : 'border-orange-100/80'}`}>
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2">Rebalancing Drag</p>
                   <div className="flex justify-between items-start">
                     <div>
-                      <span className={`text-xs font-medium flex items-center gap-1.5 ${ahead ? 'text-emerald-300' : 'text-amber-300'}`}>
-                        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${ahead ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+                      <span className={`text-xs font-medium flex items-center gap-1.5 ${ahead ? 'text-emerald-700' : 'text-orange-600'}`}>
+                        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${ahead ? 'bg-emerald-400' : 'bg-orange-400'}`} />
                         {ahead ? 'LP ahead of HODL' : 'HODL ahead of LP'}
                       </span>
                       {d.hodlValueUsd != null && (
-                        <p className="text-[10px] text-slate-500 font-mono mt-0.5 ml-3">
+                        <p className="text-[10px] text-gray-400 font-mono mt-0.5 ml-3">
                           HODL {formatUsd(d.hodlValueUsd)} vs LP {formatUsd(d.hodlValueUsd - il)}
                         </p>
                       )}
                     </div>
-                    <p className={`text-xs font-bold font-mono ${ahead ? 'text-emerald-400' : 'text-amber-400'}`}>
+                    <p className={`text-xs font-bold font-mono ${ahead ? 'text-emerald-600' : 'text-orange-500'}`}>
                       {ahead ? '' : '+'}{formatUsd(il)}
                     </p>
                   </div>
@@ -587,27 +592,27 @@ function RebalanceEventRow({ event, index, dec0, dec1, label0, label1, expanded,
             })()}
 
             {ratioBefore && ratioAfter && (
-              <div className="bg-slate-800/70 border border-slate-700 rounded-xl p-3">
-                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-2.5">Token Ratio Drift</p>
+              <div className="bg-white/60 border border-white/80 rounded-xl p-3">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2.5">Token Ratio Drift</p>
                 <div className="space-y-2">
                   <div>
-                    <div className="flex justify-between text-[10px] text-slate-500 mb-1">
+                    <div className="flex justify-between text-[10px] text-gray-400 mb-1">
                       <span>Before</span>
                       <span>{label0} {ratioBefore.token0Pct.toFixed(0)}% / {label1} {ratioBefore.token1Pct.toFixed(0)}%</span>
                     </div>
-                    <div className="h-1.5 rounded-full overflow-hidden flex bg-slate-700">
-                      <div className="h-full bg-sky-500" style={{ width: `${ratioBefore.token0Pct}%` }} />
-                      <div className="h-full bg-amber-400 flex-1" />
+                    <div className="h-1.5 rounded-full overflow-hidden flex bg-gray-100">
+                      <div className="h-full bg-blue-300" style={{ width: `${ratioBefore.token0Pct}%` }} />
+                      <div className="h-full bg-amber-200 flex-1" />
                     </div>
                   </div>
                   <div>
-                    <div className="flex justify-between text-[10px] text-slate-500 mb-1">
+                    <div className="flex justify-between text-[10px] text-gray-400 mb-1">
                       <span>After</span>
                       <span>{label0} {ratioAfter.token0Pct.toFixed(0)}% / {label1} {ratioAfter.token1Pct.toFixed(0)}%</span>
                     </div>
-                    <div className="h-1.5 rounded-full overflow-hidden flex bg-slate-700">
-                      <div className="h-full bg-sky-400 transition-all" style={{ width: `${ratioAfter.token0Pct}%` }} />
-                      <div className="h-full bg-amber-400 flex-1" />
+                    <div className="h-1.5 rounded-full overflow-hidden flex bg-gray-100">
+                      <div className="h-full bg-blue-400 transition-all" style={{ width: `${ratioAfter.token0Pct}%` }} />
+                      <div className="h-full bg-amber-300 flex-1" />
                     </div>
                   </div>
                 </div>
@@ -617,8 +622,8 @@ function RebalanceEventRow({ event, index, dec0, dec1, label0, label1, expanded,
         )}
 
         {hashes.length > 0 && (
-          <div className="bg-slate-800/70 border border-slate-700 rounded-xl p-3">
-            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-2.5">Transactions</p>
+          <div className="bg-white/60 border border-white/80 rounded-xl p-3">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2.5">Transactions</p>
             <TxList hashes={hashes} steps={steps} />
           </div>
         )}
@@ -654,89 +659,85 @@ function ClosedEvent({ strategy, stats, closeEvent, dec0, dec1, label0, label1, 
 
   return (
     <TimelineEventRow
-      iconBg="bg-slate-700 border border-slate-600"
-      icon={<svg className="w-4 h-4 text-slate-400" fill="currentColor" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>}
-      dotColor={strategy.status === 'STOPPED_ON_ERROR' ? 'bg-rose-400' : 'bg-slate-600'}
+      iconBg="bg-gray-100 border border-gray-200"
+      icon={<svg className="w-4 h-4 text-gray-500" fill="currentColor" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>}
+      dotColor={strategy.status === 'STOPPED_ON_ERROR' ? 'bg-red-400' : 'bg-gray-400'}
       label="Strategy Closed"
       subtitle={subtitle}
       date={strategy.stoppedAt ? formatEventDate(strategy.stoppedAt) : '—'}
       metric={netUsd != null ? `NET ${netUsd >= 0 ? '+' : ''}${formatUsd(netUsd)}` : '—'}
-      metricClass={netUsd == null ? 'text-slate-500' : netUsd >= 0 ? 'text-emerald-400' : 'text-rose-400'}
+      metricClass={netUsd == null ? 'text-gray-400' : netUsd >= 0 ? 'text-emerald-600' : 'text-red-500'}
       expanded={expanded}
       onToggle={onToggle}
     >
       <div className="space-y-2 mt-2">
-        <div className="bg-slate-800/70 border border-slate-700 rounded-xl p-4 space-y-2.5">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-3">Final Summary</p>
+        <div className="bg-white/60 border border-white/80 rounded-xl p-4 space-y-2.5">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-3">Final Summary</p>
 
           <div className="flex justify-between items-start">
             <div>
-              <p className="text-xs font-semibold text-slate-300">Deposited</p>
+              <p className="text-xs font-semibold text-gray-600">Deposited</p>
               {strategy.initialToken0Amount && strategy.initialToken1Amount && (
-                <p className="text-[11px] text-slate-500 mt-0.5">
-                  <RawAmount amount={strategy.initialToken0Amount} decimals={dec0} label={label0} />
-                  {' + '}
-                  <RawAmount amount={strategy.initialToken1Amount} decimals={dec1} label={label1} />
+                <p className="text-[11px] text-gray-400 mt-0.5">
+                  {rawToFloat(strategy.initialToken0Amount, dec0).toFixed(4)} {label0} + {rawToFloat(strategy.initialToken1Amount, dec1).toFixed(2)} {label1}
                   {strategy.openEthPriceUsd ? ` at $${strategy.openEthPriceUsd.toFixed(0)}` : ''}
                 </p>
               )}
             </div>
-            <span className="text-sm font-bold font-mono text-slate-100">
+            <span className="text-sm font-bold font-mono text-gray-800">
               {depositUsd != null ? `−${formatUsd(depositUsd)}` : '—'}
             </span>
           </div>
 
           <div className="flex justify-between items-start">
             <div>
-              <p className="text-xs font-semibold text-slate-300">Withdrawn</p>
+              <p className="text-xs font-semibold text-gray-600">Withdrawn</p>
               {strategy.endToken0Amount && strategy.endToken1Amount && (
-                <p className="text-[11px] text-slate-500 mt-0.5">
-                  <RawAmount amount={strategy.endToken0Amount!} decimals={dec0} label={label0} />
-                  {' + '}
-                  <RawAmount amount={strategy.endToken1Amount!} decimals={dec1} label={label1} />
+                <p className="text-[11px] text-gray-400 mt-0.5">
+                  {rawToFloat(strategy.endToken0Amount, dec0).toFixed(4)} {label0} + {rawToFloat(strategy.endToken1Amount, dec1).toFixed(2)} {label1}
                   {strategy.endEthPriceUsd ? ` at $${strategy.endEthPriceUsd.toFixed(0)}` : ''}
                 </p>
               )}
             </div>
-            <span className="text-sm font-bold font-mono text-emerald-300">
+            <span className="text-sm font-bold font-mono text-emerald-700">
               {withdrawUsd != null ? `+${formatUsd(withdrawUsd)}` : '—'}
             </span>
           </div>
 
-          <div className="border-t border-slate-700 pt-2 space-y-1.5">
+          <div className="border-t border-gray-100 pt-2 space-y-1.5">
             {positionDelta != null && (
               <div className="flex justify-between items-center">
-                <span className="text-xs text-slate-400">Position change</span>
-                <span className={`text-xs font-bold font-mono ${positionDelta >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                <span className="text-xs text-gray-500">Position change</span>
+                <span className={`text-xs font-bold font-mono ${positionDelta >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
                   {positionDelta >= 0 ? '+' : ''}{formatUsd(positionDelta)}
                 </span>
               </div>
             )}
             <div className="flex justify-between items-center">
-              <span className="text-xs text-emerald-300 flex items-center gap-1.5">
+              <span className="text-xs text-emerald-700 flex items-center gap-1.5">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
                 Total fees earned
               </span>
-              <span className="text-xs font-bold font-mono text-emerald-400">+{formatUsd(feesUsd)}</span>
+              <span className="text-xs font-bold font-mono text-emerald-600">+{formatUsd(feesUsd)}</span>
             </div>
             <div className="flex justify-between items-center">
-              <span className="text-xs text-rose-300 flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-rose-400 shrink-0" />
+              <span className="text-xs text-red-600 flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-red-400 shrink-0" />
                 Total gas spent
               </span>
-              <span className="text-xs font-bold font-mono text-rose-400">−{formatUsd(gasUsd)}</span>
+              <span className="text-xs font-bold font-mono text-red-500">−{formatUsd(gasUsd)}</span>
             </div>
           </div>
 
           {netUsd != null && (
-            <div className="flex justify-between items-center pt-3 border-t-2 border-slate-600">
-              <span className="text-base font-bold text-slate-100">NET</span>
+            <div className="flex justify-between items-center pt-3 border-t-2 border-gray-200">
+              <span className="text-base font-bold text-gray-900">NET</span>
               <div className="text-right">
-                <span className={`text-2xl font-bold font-mono ${netUsd >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                <span className={`text-2xl font-bold font-mono ${netUsd >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
                   {netUsd >= 0 ? '+' : ''}{formatUsd(netUsd)}
                 </span>
                 {netPct != null && (
-                  <p className={`text-xs font-semibold mt-0.5 ${netUsd >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                  <p className={`text-xs font-semibold mt-0.5 ${netUsd >= 0 ? 'text-emerald-500' : 'text-red-400'}`}>
                     {netUsd >= 0 ? '+' : ''}{netPct.toFixed(2)}% on deposit
                   </p>
                 )}
@@ -746,8 +747,8 @@ function ClosedEvent({ strategy, stats, closeEvent, dec0, dec1, label0, label1, 
         </div>
 
         {closeEvent && closeEvent.transactions.length > 0 && (
-          <div className="bg-slate-800/70 border border-slate-700 rounded-xl p-3">
-            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-2.5">Transactions</p>
+          <div className="bg-white/60 border border-white/80 rounded-xl p-3">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2.5">Transactions</p>
             <TxList
               hashes={closeEvent.transactions.map(t => t.txHash)}
               steps={closeEvent.transactions.map(t => t.action)}
@@ -775,7 +776,7 @@ function ActivityTimeline({ strategy, stats, events, dec0, dec1, label0, label1 
   }
 
   if (!events) {
-    return <p className="text-slate-500 text-sm text-center py-8">Loading…</p>
+    return <p className="text-gray-400 text-sm text-center py-8">Loading…</p>
   }
 
   const rebalanceEvents = [...events.filter(e => e.action === 'REBALANCE')].sort(
@@ -820,40 +821,40 @@ function ActivityTimeline({ strategy, stats, events, dec0, dec1, label0, label1 
 
 function OnboardingState({ hasWallet }: { hasWallet: boolean }) {
   return (
-    <div className="bg-slate-800/70 backdrop-blur-xl rounded-2xl border border-slate-700 shadow-lg shadow-black/30 flex flex-col items-center justify-center py-20 text-center">
-      <div className="w-16 h-16 bg-slate-800/70 backdrop-blur-sm rounded-2xl flex items-center justify-center mb-5 border border-slate-700 shadow-sm">
-        <span className="text-2xl font-bold text-slate-500">Δ</span>
+    <div className="bg-white/60 backdrop-blur-xl rounded-2xl border border-white/70 shadow-lg shadow-black/5 flex flex-col items-center justify-center py-20 text-center">
+      <div className="w-16 h-16 bg-white/60 backdrop-blur-sm rounded-2xl flex items-center justify-center mb-5 border border-white/80 shadow-sm">
+        <span className="text-2xl font-bold text-gray-400">Δ</span>
       </div>
-      <h2 className="text-lg font-bold text-slate-100 mb-2">Welcome to lagrangefi</h2>
-      <p className="text-slate-400 text-sm max-w-xs mb-8">
+      <h2 className="text-lg font-bold text-gray-900 mb-2">Welcome to lagrangefi</h2>
+      <p className="text-gray-500 text-sm max-w-xs mb-8">
         Automatically rebalances your Uniswap v3 ETH/USDC position to keep it in range.
       </p>
       <div className="flex flex-col items-center gap-3 w-full max-w-xs">
         <div className={`w-full flex items-center gap-4 rounded-2xl border p-4 ${
-          hasWallet ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-slate-800/70 backdrop-blur-sm border-slate-700 shadow-sm'
+          hasWallet ? 'bg-emerald-50/60 border-emerald-200' : 'bg-white/60 backdrop-blur-sm border-white/80 shadow-sm'
         }`}>
           <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold shrink-0 ${
-            hasWallet ? 'bg-emerald-500 text-slate-950' : 'bg-emerald-400 text-slate-950'
+            hasWallet ? 'bg-emerald-500 text-white' : 'bg-gray-900 text-white'
           }`}>{hasWallet ? '✓' : '1'}</div>
           <div className="text-left">
-            <p className={`text-sm font-semibold ${hasWallet ? 'text-emerald-300' : 'text-slate-100'}`}>
+            <p className={`text-sm font-semibold ${hasWallet ? 'text-emerald-700' : 'text-gray-900'}`}>
               {hasWallet ? 'Wallet configured' : 'Add your wallet'}
             </p>
-            {!hasWallet && <p className="text-xs text-slate-500">BIP39 mnemonic or private key</p>}
+            {!hasWallet && <p className="text-xs text-gray-400">BIP39 mnemonic or private key</p>}
           </div>
           {!hasWallet && (
-            <Link to="/profile" className="ml-auto bg-emerald-400 hover:bg-emerald-300 text-slate-950 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors">
+            <Link to="/profile" className="ml-auto bg-gray-900 hover:bg-gray-800 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors">
               Go →
             </Link>
           )}
         </div>
         <div className={`w-full flex items-center gap-4 rounded-2xl border p-4 ${
-          hasWallet ? 'bg-slate-800/70 backdrop-blur-sm border-slate-700 shadow-sm' : 'bg-slate-700/40 border-slate-600/60 opacity-60'
+          hasWallet ? 'bg-white/60 backdrop-blur-sm border-white/80 shadow-sm' : 'bg-gray-100/40 border-gray-200/60 opacity-60'
         }`}>
-          <div className="w-8 h-8 rounded-full bg-emerald-400 text-slate-950 flex items-center justify-center text-sm font-bold shrink-0">2</div>
+          <div className="w-8 h-8 rounded-full bg-gray-900 text-white flex items-center justify-center text-sm font-bold shrink-0">2</div>
           <div className="text-left">
-            <p className="text-sm font-semibold text-slate-100">Create a strategy</p>
-            <p className="text-xs text-slate-500">Deposit ETH + USDC, set range width</p>
+            <p className="text-sm font-semibold text-gray-900">Create a strategy</p>
+            <p className="text-xs text-gray-400">Deposit ETH + USDC, set range width</p>
           </div>
         </div>
       </div>
@@ -879,6 +880,7 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
   const [lastUpdated,   setLastUpdated] = useState<Date | null>(null)
   const [refreshing,    setRefreshing]  = useState(false)
 
+  const [dashTab,       setDashTab]      = useState<'active' | 'closed'>('active')
   const [showCreate,    setShowCreate]   = useState(false)
   const [showAdvanced,  setShowAdvanced] = useState(false)
   const [createMode,    setCreateMode]   = useState<'mint' | 'register'>('mint')
@@ -1054,8 +1056,8 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
     return (
       <div key={s.id} className={`relative backdrop-blur-xl rounded-2xl border shadow-lg transition-shadow hover:shadow-xl ${
         !isStopped(s.status)
-          ? 'bg-slate-800/70 border-slate-700 shadow-emerald-500/10'
-          : 'bg-slate-800/60 border-slate-700'
+          ? 'bg-white/65 border-white/70 shadow-emerald-100/50'
+          : 'bg-white/50 border-white/60'
       }`}>
         {!isStopped(s.status) && (
           <div className="absolute top-0 left-0 right-0 h-0.5 rounded-t-2xl bg-gradient-to-r from-emerald-400 via-teal-300 to-emerald-400" />
@@ -1063,27 +1065,27 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
 
         {/* Card header */}
         <div
-          className={`flex items-center justify-between px-3 sm:px-5 py-3 sm:py-4 ${!isAlwaysExpanded ? 'cursor-pointer hover:bg-slate-700/40 transition-colors' : ''}`}
+          className={`flex items-center justify-between px-3 sm:px-5 py-3 sm:py-4 ${!isAlwaysExpanded ? 'cursor-pointer hover:bg-white/20 transition-colors' : ''}`}
           onClick={!isAlwaysExpanded ? () => expandStrategy(s.id) : undefined}
         >
           <div className="flex items-center gap-3 min-w-0">
             <StatusBadge status={s.status} />
-            <span className="font-semibold text-slate-100 truncate">{s.name}</span>
-            <span className="text-xs text-slate-500 font-mono shrink-0 hidden sm:inline">
+            <span className="font-semibold text-gray-900 truncate">{s.name}</span>
+            <span className="text-xs text-gray-400 font-mono shrink-0 hidden sm:inline">
               {label0}/{label1} · {feeLabel(s.fee)}
             </span>
             {!isStopped(s.status) && (
-              <span className="text-xs text-slate-500 shrink-0 hidden md:inline">
+              <span className="text-xs text-gray-400 shrink-0 hidden md:inline">
                 {days}d running
               </span>
             )}
             {s.status === 'ACTIVE' && inRange !== null && (
               <span className={`hidden lg:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ${
                 inRange
-                  ? 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/30'
-                  : 'bg-rose-500/10 text-rose-300 border border-rose-500/30'
+                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                  : 'bg-red-50 text-red-700 border border-red-200'
               }`}>
-                <span className={`w-1.5 h-1.5 rounded-full ${inRange ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`} />
+                <span className={`w-1.5 h-1.5 rounded-full ${inRange ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`} />
                 {inRange ? 'In Range' : 'Out of Range'}
               </span>
             )}
@@ -1092,10 +1094,10 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
           <div className="flex items-center gap-1.5 shrink-0 ml-2" onClick={e => e.stopPropagation()}>
             {!isStopped(s.status) && confirmStopId !== s.id && (
               <button onClick={() => setConfirmStopId(s.id)}
-                className="inline-flex items-center gap-1.5 text-xs font-semibold text-rose-400/80
-                           bg-rose-500/8 backdrop-blur-sm border border-rose-500/30
-                           hover:text-rose-300 hover:bg-rose-500/15 hover:border-rose-400/60
-                           px-3 py-1.5 rounded-lg transition-all hover:shadow-sm hover:shadow-rose-500/10">
+                className="inline-flex items-center gap-1.5 text-xs font-semibold text-red-500/80
+                           bg-red-500/8 backdrop-blur-sm border border-red-300/40
+                           hover:text-red-600 hover:bg-red-500/15 hover:border-red-400/60
+                           px-3 py-1.5 rounded-lg transition-all hover:shadow-sm hover:shadow-red-100">
                 <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
                   <rect x="4" y="4" width="16" height="16" rx="2"/>
                 </svg>
@@ -1103,14 +1105,14 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
               </button>
             )}
             {confirmStopId === s.id && (
-              <div className="flex items-center gap-2 bg-slate-800/80 backdrop-blur-md border border-rose-500/20 rounded-xl px-3 py-1.5 shadow-lg shadow-red-500/10">
-                <span className="text-xs text-slate-400 font-medium whitespace-nowrap">
+              <div className="flex items-center gap-2 bg-white/80 backdrop-blur-md border border-red-100 rounded-xl px-3 py-1.5 shadow-lg shadow-red-500/10">
+                <span className="text-xs text-gray-500 font-medium whitespace-nowrap">
                   {stoppingId === s.id ? 'Stopping…' : 'Stop permanently?'}
                 </span>
                 <button onClick={() => handleStop(s.id)} disabled={stoppingId === s.id}
-                  className="inline-flex items-center gap-1 text-xs font-bold text-slate-950
-                             bg-gradient-to-r from-rose-500 to-rose-600
-                             hover:from-rose-600 hover:to-rose-700
+                  className="inline-flex items-center gap-1 text-xs font-bold text-white
+                             bg-gradient-to-r from-red-500 to-rose-600
+                             hover:from-red-600 hover:to-rose-700
                              disabled:opacity-60 disabled:cursor-not-allowed
                              px-3 py-1 rounded-lg shadow-sm shadow-red-500/30 transition-all">
                   {stoppingId === s.id ? (
@@ -1125,7 +1127,7 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
                 </button>
                 {stoppingId !== s.id && (
                   <button onClick={() => setConfirmStopId(null)}
-                    className="text-xs font-medium text-slate-500 hover:text-slate-300 transition-colors">
+                    className="text-xs font-medium text-gray-400 hover:text-gray-600 transition-colors">
                     Cancel
                   </button>
                 )}
@@ -1133,7 +1135,7 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
             )}
             {!isAlwaysExpanded && (
               <svg
-                className={`w-4 h-4 text-slate-600 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
+                className={`w-4 h-4 text-gray-300 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
                 fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <polyline points="6 9 12 15 18 9" />
               </svg>
@@ -1143,15 +1145,15 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
 
         {/* Expanded panel */}
         {isExpanded && (
-          <div className="border-t border-slate-700 px-3 sm:px-5 py-4 sm:py-5 bg-slate-700/40">
+          <div className="border-t border-white/50 px-3 sm:px-5 py-4 sm:py-5 bg-white/10">
             {/* Tabs */}
-            <div className="flex gap-1 bg-slate-700/80 border border-slate-600/60 rounded-xl p-1 w-fit mb-5">
+            <div className="flex gap-1 bg-gray-100/80 border border-gray-200/60 rounded-xl p-1 w-fit mb-5">
               {(['overview', 'history'] as const).map(t => (
                 <button key={t} onClick={() => setTab(s.id, t)}
                   className={`px-4 py-1.5 rounded-lg text-xs font-semibold capitalize transition-all ${
                     tab === t
-                      ? 'bg-slate-800 text-slate-100 shadow-sm border border-slate-600/80'
-                      : 'text-slate-500 hover:text-slate-300'
+                      ? 'bg-white text-gray-900 shadow-sm border border-gray-200/80'
+                      : 'text-gray-400 hover:text-gray-600'
                   }`}>
                   {t}
                 </button>
@@ -1164,84 +1166,84 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
 
                 {/* Summary strip */}
                 {st && (
-                  <div className="bg-slate-800/60 backdrop-blur-md border border-slate-700 rounded-2xl overflow-hidden shadow-sm">
+                  <div className="bg-white/50 backdrop-blur-md border border-white/70 rounded-2xl overflow-hidden shadow-sm">
                     <div className="grid grid-cols-2 sm:grid-cols-4">
 
                       {/* Total Return — hero */}
-                      <div className="relative px-5 py-4 border-b sm:border-b-0 sm:border-r border-slate-700">
+                      <div className="relative px-5 py-4 border-b sm:border-b-0 sm:border-r border-white/50">
                         <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-emerald-400/70 to-teal-300/50" />
-                        <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-2.5">Total Return</p>
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2.5">Total Return</p>
                         <p className={`text-xl font-bold tracking-tight ${
-                          totalReturn == null ? 'text-slate-500' :
-                          totalReturn.totalReturnUsd >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                          totalReturn == null ? 'text-gray-400' :
+                          totalReturn.totalReturnUsd >= 0 ? 'text-emerald-600' : 'text-red-500'
                         }`}>
                           {totalReturn == null ? '—' :
                             (totalReturn.totalReturnUsd >= 0 ? '+' : '') + formatUsd(totalReturn.totalReturnUsd)}
                         </p>
                         {totalReturn?.totalReturnPct != null && (
-                          <p className={`text-[10px] mt-1.5 font-semibold ${totalReturn.totalReturnUsd >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                          <p className={`text-[10px] mt-1.5 font-semibold ${totalReturn.totalReturnUsd >= 0 ? 'text-emerald-500' : 'text-red-400'}`}>
                             {totalReturn.totalReturnUsd >= 0 ? '+' : ''}{totalReturn.totalReturnPct.toFixed(2)}% on deposit
                           </p>
                         )}
                       </div>
 
                       {/* IL (active) / Position Δ (stopped) */}
-                      <div className="relative px-5 py-4 border-b sm:border-b-0 sm:border-r border-slate-700">
-                        <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-amber-400/70 to-amber-300/50" />
-                        <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-2.5">
+                      <div className="relative px-5 py-4 border-b sm:border-b-0 sm:border-r border-white/50">
+                        <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-orange-400/70 to-amber-300/50" />
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2.5">
                           {s.status === 'ACTIVE' ? 'Compare to Hold' : 'Position Δ'}
                         </p>
                         {s.status === 'ACTIVE' ? (
                           compareToHold ? (
                             <>
-                              <p className={`text-xl font-bold tracking-tight ${compareToHold.compareUsd < 0 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                              <p className={`text-xl font-bold tracking-tight ${compareToHold.compareUsd < 0 ? 'text-emerald-600' : 'text-orange-500'}`}>
                                 {compareToHold.compareUsd >= 0 ? '+' : ''}{formatUsd(compareToHold.compareUsd)}
                               </p>
-                              <p className={`text-[10px] mt-1.5 font-semibold ${compareToHold.compareUsd < 0 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                              <p className={`text-[10px] mt-1.5 font-semibold ${compareToHold.compareUsd < 0 ? 'text-emerald-500' : 'text-orange-400'}`}>
                                 {compareToHold.comparePct.toFixed(2)}% {compareToHold.compareUsd < 0 ? 'LP ahead' : 'HODL ahead'}
                               </p>
                             </>
                           ) : (
-                            <p className="text-xl font-bold text-slate-600">—</p>
+                            <p className="text-xl font-bold text-gray-300">—</p>
                           )
                         ) : totalReturn ? (
                           <>
                             <p className={`text-xl font-bold tracking-tight ${
-                              (totalReturn.currentTotalValueUsd - (s.initialValueUsd ?? 0)) >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                              (totalReturn.currentTotalValueUsd - (s.initialValueUsd ?? 0)) >= 0 ? 'text-emerald-600' : 'text-red-500'
                             }`}>
                               {((totalReturn.currentTotalValueUsd - (s.initialValueUsd ?? 0)) >= 0 ? '+' : '') +
                                 formatUsd(totalReturn.currentTotalValueUsd - (s.initialValueUsd ?? 0))}
                             </p>
-                            <p className="text-[10px] mt-1.5 text-slate-500">deposit → withdraw</p>
+                            <p className="text-[10px] mt-1.5 text-gray-400">deposit → withdraw</p>
                           </>
-                        ) : <p className="text-xl font-bold text-slate-600">—</p>}
+                        ) : <p className="text-xl font-bold text-gray-300">—</p>}
                       </div>
 
                       {/* APY */}
-                      <div className="relative px-5 py-4 border-r border-slate-700">
-                        <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-sky-400/70 to-sky-600/50" />
-                        <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-2.5">APY</p>
+                      <div className="relative px-5 py-4 border-r border-white/50">
+                        <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-sky-400/70 to-blue-300/50" />
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2.5">APY</p>
                         <p className={`text-xl font-bold tracking-tight ${
-                          apy == null ? 'text-slate-500' : apy >= 0 ? 'text-sky-400' : 'text-rose-400'
+                          apy == null ? 'text-gray-400' : apy >= 0 ? 'text-sky-600' : 'text-red-500'
                         }`}>
                           {apy == null ? '—' : (apy >= 0 ? '+' : '') + apy.toFixed(1) + '%'}
                         </p>
-                        <p className="text-[10px] text-slate-500 mt-1.5">annualized · {days}d running</p>
+                        <p className="text-[10px] text-gray-400 mt-1.5">annualized · {days}d running</p>
                       </div>
 
                       {/* Time in range */}
                       <div className="relative px-5 py-4">
                         <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-violet-400/70 to-purple-300/50" />
-                        <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-2.5">In Range</p>
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2.5">In Range</p>
                         <p className={`text-xl font-bold tracking-tight ${
-                          st.timeInRangePct >= 70 ? 'text-emerald-400' : st.timeInRangePct >= 40 ? 'text-amber-400' : 'text-rose-400'
+                          st.timeInRangePct >= 70 ? 'text-emerald-600' : st.timeInRangePct >= 40 ? 'text-amber-500' : 'text-red-500'
                         }`}>
                           {st.timeInRangePct.toFixed(1)}%
                         </p>
-                        <div className="mt-2 h-1 bg-slate-800/70 rounded-full overflow-hidden">
+                        <div className="mt-2 h-1 bg-white/70 rounded-full overflow-hidden">
                           <div className={`h-full rounded-full ${
                             st.timeInRangePct >= 70 ? 'bg-gradient-to-r from-emerald-400 to-teal-400' :
-                            st.timeInRangePct >= 40 ? 'bg-amber-400' : 'bg-rose-400'
+                            st.timeInRangePct >= 40 ? 'bg-amber-400' : 'bg-red-400'
                           }`} style={{ width: `${st.timeInRangePct}%` }} />
                         </div>
                       </div>
@@ -1253,18 +1255,18 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
 
                   {/* Position card */}
-                  <div className="bg-slate-800/60 backdrop-blur-md border border-slate-700 rounded-2xl shadow-sm">
-                    <div className="bg-gradient-to-r from-sky-500/10 via-sky-400/6 to-transparent border-b border-sky-500/20 px-5 pt-4 pb-3 rounded-t-2xl">
+                  <div className="bg-white/50 backdrop-blur-md border border-white/70 rounded-2xl shadow-sm">
+                    <div className="bg-gradient-to-r from-blue-500/10 via-sky-400/6 to-transparent border-b border-blue-100/50 px-5 pt-4 pb-3 rounded-t-2xl">
                       <div className="flex items-center justify-between mb-1">
                         <div className="flex items-center gap-2">
-                          <div className="w-0.5 h-4 rounded-full bg-gradient-to-b from-sky-400 to-sky-400" />
-                          <h3 className="text-[10px] font-bold uppercase tracking-widest text-sky-400/90">Position</h3>
+                          <div className="w-0.5 h-4 rounded-full bg-gradient-to-b from-blue-400 to-sky-400" />
+                          <h3 className="text-[10px] font-bold uppercase tracking-widest text-blue-500/90">Position</h3>
                         </div>
                         {pos && (
-                          <div className="flex items-center gap-1.5 bg-slate-800/70 border border-slate-700 rounded-lg px-2.5 py-1">
-                            <span className="text-[10px] text-slate-500">NFT</span>
-                            <span className="text-xs font-mono font-bold text-slate-200">#{pos.tokenId}</span>
-                            <span className={`text-[10px] font-bold ${BigInt(pos.liquidity) > 0n ? 'text-emerald-400' : 'text-rose-400'}`}>
+                          <div className="flex items-center gap-1.5 bg-white/60 border border-white/80 rounded-lg px-2.5 py-1">
+                            <span className="text-[10px] text-gray-400">NFT</span>
+                            <span className="text-xs font-mono font-bold text-gray-700">#{pos.tokenId}</span>
+                            <span className={`text-[10px] font-bold ${BigInt(pos.liquidity) > 0n ? 'text-emerald-500' : 'text-red-400'}`}>
                               {BigInt(pos.liquidity) > 0n ? '●' : '○'}
                             </span>
                           </div>
@@ -1272,10 +1274,10 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
                       </div>
                       {s.status === 'ACTIVE' && pool && pos && (
                         <>
-                          <p className="text-3xl font-bold text-slate-100 tracking-tight leading-none mt-2">
+                          <p className="text-3xl font-bold text-gray-900 tracking-tight leading-none mt-2">
                             ${Number(pool.price).toLocaleString('en-US', { maximumFractionDigits: 2 })}
                           </p>
-                          <p className="text-xs text-slate-500 mt-1">{label0}/{label1} · {feeLabel(pos.fee)}</p>
+                          <p className="text-xs text-gray-400 mt-1">{label0}/{label1} · {feeLabel(pos.fee)}</p>
                         </>
                       )}
                     </div>
@@ -1283,12 +1285,12 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
                       style={{ backgroundImage: 'radial-gradient(circle, rgba(99,102,241,0.07) 1px, transparent 1px)', backgroundSize: '18px 18px' }}>
                       {s.status !== 'ACTIVE' ? (
                         <div className="space-y-2">
-                          <div className="flex items-center gap-3 bg-slate-800/70 border border-slate-700 rounded-xl px-3 py-2.5">
-                            <span className="text-xs font-medium text-slate-500">NFT</span>
-                            <span className="text-xs font-mono font-bold text-slate-200">#{s.currentTokenId}</span>
-                            <span className="ml-auto text-xs text-slate-500">{label0}/{label1} · {feeLabel(s.fee)}</span>
+                          <div className="flex items-center gap-3 bg-white/70 border border-white/80 rounded-xl px-3 py-2.5">
+                            <span className="text-xs font-medium text-gray-400">NFT</span>
+                            <span className="text-xs font-mono font-bold text-gray-700">#{s.currentTokenId}</span>
+                            <span className="ml-auto text-xs text-gray-400">{label0}/{label1} · {feeLabel(s.fee)}</span>
                           </div>
-                          <p className="text-xs text-slate-500 px-1">Live data available for active strategies only.</p>
+                          <p className="text-xs text-gray-400 px-1">Live data available for active strategies only.</p>
                         </div>
                       ) : pos && pool ? (
                         <>
@@ -1304,7 +1306,7 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
                           )}
                         </>
                       ) : (
-                        <div className="flex items-center gap-2 text-slate-500 text-sm py-8 justify-center">
+                        <div className="flex items-center gap-2 text-gray-400 text-sm py-8 justify-center">
                           <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
                             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
@@ -1319,11 +1321,11 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
                   <div className="flex flex-col gap-4">
 
                     {/* Performance card */}
-                    <div className="bg-slate-800/60 backdrop-blur-md border border-slate-700 rounded-2xl shadow-sm">
-                      <div className="bg-gradient-to-r from-emerald-500/10 via-teal-400/6 to-transparent border-b border-emerald-500/20 px-5 pt-4 pb-3 rounded-t-2xl">
+                    <div className="bg-white/50 backdrop-blur-md border border-white/70 rounded-2xl shadow-sm">
+                      <div className="bg-gradient-to-r from-emerald-500/10 via-teal-400/6 to-transparent border-b border-emerald-100/50 px-5 pt-4 pb-3 rounded-t-2xl">
                         <div className="flex items-center gap-2">
                           <div className="w-0.5 h-4 rounded-full bg-gradient-to-b from-emerald-400 to-teal-400" />
-                          <h3 className="text-[10px] font-bold uppercase tracking-widest text-emerald-400/90">Performance</h3>
+                          <h3 className="text-[10px] font-bold uppercase tracking-widest text-emerald-600/90">Performance</h3>
                         </div>
                       </div>
                       <div className="px-5 py-4">
@@ -1332,93 +1334,48 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
 
                             {/* Deposit row (at historical ETH price) */}
                             {s.initialValueUsd != null && (
-                              <div className="flex justify-between items-start px-2.5 py-1.5 rounded-lg bg-slate-700/60 border border-slate-700/60">
+                              <div className="flex justify-between items-start px-2.5 py-1.5 rounded-lg bg-gray-50/60 border border-gray-100/60">
                                 <div>
-                                  <span className="text-xs font-medium text-slate-400">Deposited</span>
+                                  <span className="text-xs font-medium text-gray-500">Deposited</span>
                                   {s.openEthPriceUsd && (
-                                    <p className="text-[10px] text-slate-500 mt-0.5">ETH = ${s.openEthPriceUsd.toFixed(0)} at open</p>
+                                    <p className="text-[10px] text-gray-400 mt-0.5">ETH = ${s.openEthPriceUsd.toFixed(0)} at open</p>
                                   )}
                                 </div>
-                                <span className="text-xs font-bold font-mono text-slate-200">{formatUsd(s.initialValueUsd)}</span>
+                                <span className="text-xs font-bold font-mono text-gray-700">{formatUsd(s.initialValueUsd)}</span>
                               </div>
                             )}
 
                             {/* Current/close position value */}
                             {totalReturn && (
-                              <div className={`rounded-lg border ${
+                              <div className={`flex justify-between items-start px-2.5 py-1.5 rounded-lg border ${
                                 s.status === 'ACTIVE'
-                                  ? 'bg-sky-500/10 border-sky-500/20'
-                                  : 'bg-slate-700/40 border-slate-700/60'
+                                  ? 'bg-blue-50/40 border-blue-100/50'
+                                  : 'bg-gray-50/40 border-gray-100/50'
                               }`}>
-                                <div className="flex justify-between items-start px-3 py-2">
-                                  <div>
-                                    <span className="text-sm font-medium text-slate-300">
-                                      {s.status === 'ACTIVE' ? 'Current position' : 'Withdrawn'}
-                                    </span>
-                                    {s.status === 'ACTIVE' && ethPrice > 0 && (
-                                      <p className="text-xs text-slate-500 mt-0.5">ETH = ${ethPrice.toFixed(0)} now</p>
-                                    )}
-                                  </div>
-                                  <span className="text-sm font-bold font-mono text-slate-100">{formatUsd(totalReturn.currentTotalValueUsd)}</span>
+                                <div>
+                                  <span className="text-xs font-medium text-gray-500">
+                                    {s.status === 'ACTIVE' ? 'Current position' : 'Withdrawn'}
+                                  </span>
+                                  {s.status === 'ACTIVE' && ethPrice > 0 && (
+                                    <p className="text-[10px] text-gray-400 mt-0.5">ETH = ${ethPrice.toFixed(0)} now</p>
+                                  )}
                                 </div>
-                                {s.status === 'ACTIVE' && (
-                                  <div className="border-t border-sky-500/20 px-3 pb-2 pt-1.5 flex flex-col gap-1">
-                                    <div className="flex justify-between items-center py-1 px-1 rounded hover:bg-slate-800/50 transition-colors">
-                                      <span className="text-xs text-slate-400">LP value</span>
-                                      <span className="text-xs font-mono text-slate-300">
-                                        {formatUsd(totalReturn.lpValueUsd)}
-                                        {liveToken0 && liveToken1 && (
-                                          <span className="text-slate-500 ml-1">
-                                            (<RawAmount amount={liveToken0} decimals={dec0} label={label0} />
-                                            {' + '}
-                                            <RawAmount amount={liveToken1} decimals={dec1} label={label1} />)
-                                          </span>
-                                        )}
-                                      </span>
-                                    </div>
-                                    {totalReturn.unclaimedFeesUsd > 0 && pos?.tokensOwed0 && pos?.tokensOwed1 && (
-                                      <div className="flex justify-between items-start py-1 px-1 rounded hover:bg-slate-800/50 transition-colors">
-                                        <span className="text-xs text-slate-400">Unclaimed fees</span>
-                                        <div className="text-right">
-                                          <span className="text-xs font-mono text-sky-400">+{formatUsd(totalReturn.unclaimedFeesUsd)}</span>
-                                          <p className="text-xs text-slate-500 font-mono mt-0.5">
-                                            <RawAmount amount={pos.tokensOwed0} decimals={dec0} label={label0} />
-                                            {' · '}
-                                            <RawAmount amount={pos.tokensOwed1} decimals={dec1} label={label1} />
-                                          </p>
-                                        </div>
-                                      </div>
-                                    )}
-                                    {totalReturn.pendingValueUsd > 0 && (
-                                      <div className="flex justify-between items-start py-1 px-1 rounded hover:bg-slate-800/50 transition-colors">
-                                        <span className="text-xs text-slate-400">Pending</span>
-                                        <div className="text-right">
-                                          <span className="text-xs font-mono text-amber-400">+{formatUsd(totalReturn.pendingValueUsd)}</span>
-                                          <p className="text-xs text-slate-500 font-mono mt-0.5">
-                                            <RawAmount amount={s.pendingToken0} decimals={dec0} label={label0} />
-                                            {' + '}
-                                            <RawAmount amount={s.pendingToken1} decimals={dec1} label={label1} />
-                                          </p>
-                                        </div>
-                                      </div>
-                                    )}
-                                  </div>
-                                )}
+                                <span className="text-xs font-bold font-mono text-gray-700">{formatUsd(totalReturn.currentTotalValueUsd)}</span>
                               </div>
                             )}
 
                             {/* Fees earned */}
-                            <div className="flex justify-between items-start px-2.5 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
-                              <span className="text-xs font-medium text-emerald-300 flex items-center gap-1.5 mt-0.5">
+                            <div className="flex justify-between items-start px-2.5 py-1.5 rounded-lg bg-emerald-50/50 border border-emerald-100/60">
+                              <span className="text-xs font-medium text-emerald-700 flex items-center gap-1.5 mt-0.5">
                                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
                                 Fees earned
                               </span>
                               <div className="text-right">
-                                <p className="text-xs font-bold text-emerald-400 font-mono">
+                                <p className="text-xs font-bold text-emerald-600 font-mono">
                                   {st ? '+' + formatUsd(st.feesCollectedUsd) : '—'}
                                 </p>
                                 {st.feesCollectedToken0 !== '0' && (
-                                  <p className="text-[11px] text-slate-500 font-mono mt-0.5">
+                                  <p className="text-[11px] text-gray-400 font-mono mt-0.5">
                                     <RawAmount amount={st.feesCollectedToken0} decimals={dec0} label={label0} />
                                     {' + '}
                                     <RawAmount amount={st.feesCollectedToken1} decimals={dec1} label={label1} />
@@ -1427,34 +1384,53 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
                               </div>
                             </div>
 
+                            {/* Unclaimed fees (active only) */}
+                            {s.status === 'ACTIVE' && pos && (() => {
+                              const uf = computeUnclaimedFees(pos, ethPrice, dec0, dec1)
+                              return uf ? (
+                                <div className="flex justify-between items-start px-2.5 py-1.5 rounded-lg bg-sky-50/50 border border-sky-100/60">
+                                  <span className="text-xs font-medium text-sky-700 flex items-center gap-1.5 mt-0.5">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-sky-400 shrink-0" />
+                                    Unclaimed fees
+                                  </span>
+                                  <div className="text-right">
+                                    <p className="text-xs font-bold text-sky-600 font-mono">+{formatUsd(uf.usd)}</p>
+                                    <p className="text-[11px] text-gray-400 font-mono mt-0.5">
+                                      {uf.t0.toFixed(6)} {label0} · {uf.t1.toFixed(2)} {label1}
+                                    </p>
+                                  </div>
+                                </div>
+                              ) : null
+                            })()}
+
                             {/* Gas spent */}
-                            <div className="flex justify-between items-start px-2.5 py-1.5 rounded-lg bg-rose-500/10 border border-rose-500/20">
-                              <span className="text-xs font-medium text-rose-300 flex items-center gap-1.5 mt-0.5">
-                                <span className="w-1.5 h-1.5 rounded-full bg-rose-400 shrink-0" />
+                            <div className="flex justify-between items-start px-2.5 py-1.5 rounded-lg bg-red-50/50 border border-red-100/60">
+                              <span className="text-xs font-medium text-red-600 flex items-center gap-1.5 mt-0.5">
+                                <span className="w-1.5 h-1.5 rounded-full bg-red-400 shrink-0" />
                                 Gas spent
                               </span>
                               <div className="text-right">
-                                <p className="text-xs font-bold text-rose-400 font-mono">
+                                <p className="text-xs font-bold text-red-500 font-mono">
                                   <Tooltip tip={`${st.gasCostWei} wei`}>
                                     {totalReturn ? '−' + formatUsd(totalReturn.gasSpentUsd) : weiToEth(st.gasCostWei) + ' ETH'}
                                   </Tooltip>
                                 </p>
                                 {totalReturn && (
-                                  <p className="text-[11px] text-slate-500 font-mono mt-0.5">{weiToEth(st.gasCostWei)} ETH</p>
+                                  <p className="text-[11px] text-gray-400 font-mono mt-0.5">{weiToEth(st.gasCostWei)} ETH</p>
                                 )}
                               </div>
                             </div>
 
                             {/* Swap costs */}
                             {st.swapCostUsd != null && st.swapCostUsd > 0 && (
-                              <div className="flex justify-between items-start px-2.5 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20">
-                                <span className="text-xs font-medium text-amber-300 flex items-center gap-1.5 mt-0.5">
-                                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" />
+                              <div className="flex justify-between items-start px-2.5 py-1.5 rounded-lg bg-orange-50/50 border border-orange-100/60">
+                                <span className="text-xs font-medium text-orange-600 flex items-center gap-1.5 mt-0.5">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-orange-400 shrink-0" />
                                   Swap costs
                                 </span>
                                 <div className="text-right">
-                                  <p className="text-xs font-bold text-amber-400 font-mono">−{formatUsd(st.swapCostUsd)}</p>
-                                  <p className="text-[11px] text-slate-500 font-mono mt-0.5">pool fee + slippage</p>
+                                  <p className="text-xs font-bold text-orange-500 font-mono">−{formatUsd(st.swapCostUsd)}</p>
+                                  <p className="text-[11px] text-gray-400 font-mono mt-0.5">pool fee + slippage</p>
                                 </div>
                               </div>
                             )}
@@ -1464,15 +1440,15 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
                               const driftPct = st.avgPriceDriftPct
                               const positive = driftPct >= 0
                               return (
-                                <div className="flex justify-between items-start px-2.5 py-1.5 rounded-lg bg-violet-500/10 border border-violet-500/20">
+                                <div className="flex justify-between items-start px-2.5 py-1.5 rounded-lg bg-violet-50/50 border border-violet-100/60">
                                   <div>
-                                    <span className="text-xs font-medium text-violet-400 flex items-center gap-1.5 mt-0.5">
+                                    <span className="text-xs font-medium text-violet-600 flex items-center gap-1.5 mt-0.5">
                                       <span className="w-1.5 h-1.5 rounded-full bg-violet-400 shrink-0" />
                                       Avg price drift
                                     </span>
-                                    <p className="text-[10px] text-slate-500 mt-0.5 ml-3.5">ETH move during execution</p>
+                                    <p className="text-[10px] text-gray-400 mt-0.5 ml-3.5">ETH move during execution</p>
                                   </div>
-                                  <p className={`text-xs font-bold font-mono ${positive ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                  <p className={`text-xs font-bold font-mono ${positive ? 'text-emerald-600' : 'text-red-500'}`}>
                                     {positive ? '+' : ''}{driftPct.toFixed(2)}% avg
                                   </p>
                                 </div>
@@ -1483,21 +1459,21 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
                             {s.status === 'ACTIVE' && compareToHold && (
                               <div className={`flex justify-between items-start px-2.5 py-1.5 rounded-lg border ${
                                 compareToHold.compareUsd < 0
-                                  ? 'bg-emerald-500/10 border-emerald-500/20'
-                                  : 'bg-amber-500/10 border-amber-500/20'
+                                  ? 'bg-emerald-50/40 border-emerald-100/50'
+                                  : 'bg-orange-50/40 border-orange-100/50'
                               }`}>
                                 <div>
-                                  <span className={`text-xs font-medium flex items-center gap-1.5 mt-0.5 ${compareToHold.compareUsd < 0 ? 'text-emerald-300' : 'text-amber-300'}`}>
-                                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${compareToHold.compareUsd < 0 ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+                                  <span className={`text-xs font-medium flex items-center gap-1.5 mt-0.5 ${compareToHold.compareUsd < 0 ? 'text-emerald-700' : 'text-orange-600'}`}>
+                                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${compareToHold.compareUsd < 0 ? 'bg-emerald-400' : 'bg-orange-400'}`} />
                                     Compare to hold
                                   </span>
-                                  <p className="text-[10px] text-slate-500 mt-0.5 ml-3">vs holding since open</p>
+                                  <p className="text-[10px] text-gray-400 mt-0.5 ml-3">vs holding since open</p>
                                 </div>
                                 <div className="text-right">
-                                  <p className={`text-xs font-bold font-mono ${compareToHold.compareUsd < 0 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                                  <p className={`text-xs font-bold font-mono ${compareToHold.compareUsd < 0 ? 'text-emerald-600' : 'text-orange-500'}`}>
                                     {compareToHold.compareUsd >= 0 ? '+' : ''}{formatUsd(compareToHold.compareUsd)}
                                   </p>
-                                  <p className={`text-[10px] font-semibold mt-0.5 ${compareToHold.compareUsd < 0 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                                  <p className={`text-[10px] font-semibold mt-0.5 ${compareToHold.compareUsd < 0 ? 'text-emerald-500' : 'text-orange-400'}`}>
                                     {compareToHold.comparePct.toFixed(2)}%
                                   </p>
                                 </div>
@@ -1510,16 +1486,16 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
                               const ahead = il <= 0
                               return (
                                 <div className={`flex justify-between items-start px-2.5 py-1.5 rounded-lg border ${
-                                  ahead ? 'bg-emerald-500/10 border-emerald-500/20' : 'bg-amber-500/10 border-amber-500/20'
+                                  ahead ? 'bg-emerald-50/40 border-emerald-100/50' : 'bg-orange-50/40 border-orange-100/50'
                                 }`}>
                                   <div>
-                                    <span className={`text-xs font-medium flex items-center gap-1.5 mt-0.5 ${ahead ? 'text-emerald-300' : 'text-amber-300'}`}>
-                                      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${ahead ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+                                    <span className={`text-xs font-medium flex items-center gap-1.5 mt-0.5 ${ahead ? 'text-emerald-700' : 'text-orange-600'}`}>
+                                      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${ahead ? 'bg-emerald-400' : 'bg-orange-400'}`} />
                                       Rebalancing drag
                                     </span>
-                                    <p className="text-[10px] text-slate-500 mt-0.5 ml-3">HODL − LP at last rebalance</p>
+                                    <p className="text-[10px] text-gray-400 mt-0.5 ml-3">HODL − LP at last rebalance</p>
                                   </div>
-                                  <p className={`text-xs font-bold font-mono ${ahead ? 'text-emerald-400' : 'text-amber-400'}`}>
+                                  <p className={`text-xs font-bold font-mono ${ahead ? 'text-emerald-600' : 'text-orange-500'}`}>
                                     {ahead ? '' : '+'}{formatUsd(il)}
                                   </p>
                                 </div>
@@ -1528,10 +1504,10 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
 
                             {/* Fees/gas ratio bar */}
                             {st && totalReturn && st.feesCollectedUsd > 0 && (
-                              <div className="h-1 rounded-full overflow-hidden flex mx-2.5 mt-1 bg-slate-700">
+                              <div className="h-1 rounded-full overflow-hidden flex mx-2.5 mt-1 bg-gray-100">
                                 <div className="h-full bg-gradient-to-r from-emerald-400 to-emerald-500"
                                   style={{ width: `${Math.min((st.feesCollectedUsd / (st.feesCollectedUsd + totalReturn.gasSpentUsd)) * 100, 100)}%` }} />
-                                <div className="h-full bg-gradient-to-r from-rose-400 to-rose-500"
+                                <div className="h-full bg-gradient-to-r from-red-400 to-red-500"
                                   style={{ width: `${Math.min((totalReturn.gasSpentUsd / (st.feesCollectedUsd + totalReturn.gasSpentUsd)) * 100, 100)}%` }} />
                               </div>
                             )}
@@ -1539,7 +1515,7 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
                             {/* Break-even */}
                             {breakEven && (
                               <div className="px-2.5 pt-2 mt-1">
-                                <div className="flex justify-between text-[10px] text-slate-500 mb-1">
+                                <div className="flex justify-between text-[10px] text-gray-400 mb-1">
                                   <span className="font-semibold">
                                     {breakEven.isBreakEven ? '✓ Gas recovered' : 'Gas recovery'}
                                   </span>
@@ -1550,7 +1526,7 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
                                     }
                                   </span>
                                 </div>
-                                <div className="h-1 rounded-full overflow-hidden bg-slate-700">
+                                <div className="h-1 rounded-full overflow-hidden bg-gray-100">
                                   <div className={`h-full rounded-full transition-all ${breakEven.isBreakEven ? 'bg-emerald-400' : 'bg-sky-400'}`}
                                     style={{ width: `${Math.min((breakEven.feesCollectedUsd / breakEven.breakEvenUsd) * 100, 100)}%` }} />
                                 </div>
@@ -1559,23 +1535,23 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
 
                             {/* Stopped snapshot */}
                             {isStopped(s.status) && s.endEthPriceUsd != null && (
-                              <div className="pt-3 border-t border-slate-700/80 space-y-1">
-                                <p className="text-[11px] text-slate-500 font-medium px-2.5">At close · ETH = {formatUsd(s.endEthPriceUsd)}</p>
+                              <div className="pt-3 border-t border-gray-100/80 space-y-1">
+                                <p className="text-[11px] text-gray-400 font-medium px-2.5">At close · ETH = {formatUsd(s.endEthPriceUsd)}</p>
                               </div>
                             )}
                           </div>
                         ) : (
-                          <p className="text-xs text-slate-500 py-2 px-2.5">Loading…</p>
+                          <p className="text-xs text-gray-400 py-2 px-2.5">Loading…</p>
                         )}
                       </div>
                     </div>
 
                     {/* Config card */}
-                    <div className="bg-slate-800/60 backdrop-blur-md border border-slate-700 rounded-2xl shadow-sm">
-                      <div className="bg-gradient-to-r from-violet-500/10 via-purple-400/6 to-transparent border-b border-violet-500/20 px-5 pt-4 pb-3 rounded-t-2xl">
+                    <div className="bg-white/50 backdrop-blur-md border border-white/70 rounded-2xl shadow-sm">
+                      <div className="bg-gradient-to-r from-violet-500/10 via-purple-400/6 to-transparent border-b border-violet-100/50 px-5 pt-4 pb-3 rounded-t-2xl">
                         <div className="flex items-center gap-2">
                           <div className="w-0.5 h-4 rounded-full bg-gradient-to-b from-violet-400 to-purple-400" />
-                          <h3 className="text-[10px] font-bold uppercase tracking-widest text-violet-400/90">Config</h3>
+                          <h3 className="text-[10px] font-bold uppercase tracking-widest text-violet-500/90">Config</h3>
                         </div>
                       </div>
                       <div className="px-5 py-4">
@@ -1586,7 +1562,7 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
                             `${s.pollIntervalSeconds}s poll`,
                             feeLabel(s.fee) + ' fee',
                           ].map(tag => (
-                            <span key={tag} className="inline-flex items-center px-2.5 py-1 rounded-lg bg-slate-800/70 border border-slate-700 text-xs font-semibold text-slate-300 shadow-sm">
+                            <span key={tag} className="inline-flex items-center px-2.5 py-1 rounded-lg bg-white/70 border border-white/90 text-xs font-semibold text-gray-600 shadow-sm">
                               {tag}
                             </span>
                           ))}
@@ -1614,7 +1590,7 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
 
             {/* ── History tab ── */}
             {tab === 'history' && (
-              <div className="bg-slate-800/60 backdrop-blur-sm border border-slate-700 rounded-2xl p-5 shadow-sm">
+              <div className="bg-white/50 backdrop-blur-sm border border-white/70 rounded-2xl p-5 shadow-sm">
                 <ActivityTimeline
                   strategy={s}
                   stats={st}
@@ -1629,43 +1605,368 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
     )
   }
 
+  function renderDashboardView(s: Strategy) {
+    const pos      = positions[s.id]
+    const pool     = poolStates[s.id]
+    const st       = stats[s.id]
+    const dec0     = s.token0Decimals ?? 18
+    const dec1     = s.token1Decimals ?? 6
+    const label0   = tokenLabel(s.token0)
+    const label1   = tokenLabel(s.token1)
+    const ethPrice = pool ? parseFloat(pool.price) : 0
+    const inRange  = pool && pos ? pool.tick >= pos.tickLower && pool.tick < pos.tickUpper : null
+
+    const latestSuccess = (rebalances[s.id] ?? []).find(
+      r => r.action === 'REBALANCE' && r.status === 'success' && r.rebalanceDetails?.positionToken0End
+    )
+    const liveToken0 = pos?.amount0 ?? latestSuccess?.rebalanceDetails?.positionToken0End ?? null
+    const liveToken1 = pos?.amount1 ?? latestSuccess?.rebalanceDetails?.positionToken1End ?? null
+
+    const liveT0 = liveToken0 ? rawToFloat(liveToken0, dec0) : null
+    const liveT1 = liveToken1 ? rawToFloat(liveToken1, dec1) : null
+    const posValueUsd = (liveT0 !== null && liveT1 !== null && ethPrice > 0)
+      ? (label0.includes('WETH') ? liveT0 * ethPrice + liveT1 : liveT1 * ethPrice + liveT0)
+      : null
+
+    const unclaimed = pos ? computeUnclaimedFees(pos, ethPrice, dec0, dec1) : null
+
+    const rebalanceEvents = (rebalances[s.id] ?? [])
+      .filter(r => r.action === 'REBALANCE')
+      .sort((a, b) => new Date(b.triggeredAt).getTime() - new Date(a.triggeredAt).getTime())
+
+    const rangeBar = (pool && pos) ? (() => {
+      const pad = (pos.tickUpper - pos.tickLower) * 0.2
+      const min = pos.tickLower - pad, max = pos.tickUpper + pad, total = max - min
+      const loPct = ((pos.tickLower - min) / total) * 100
+      const hiPct = ((pos.tickUpper - min) / total) * 100
+      const curPct = Math.min(Math.max(((pool.tick - min) / total) * 100, 0), 100)
+      return {
+        loPct, hiPct, curPct,
+        lo:  tickToPrice(pos.tickLower, pool.decimals0, pool.decimals1),
+        hi:  tickToPrice(pos.tickUpper, pool.decimals0, pool.decimals1),
+        cur: tickToPrice(pool.tick,     pool.decimals0, pool.decimals1),
+      }
+    })() : null
+
+    const statItems = [
+      {
+        label: 'Net P&L',
+        value: st ? `${st.feesCollectedUsd - st.gasCostUsd >= 0 ? '+' : ''}${formatUsd(st.feesCollectedUsd - st.gasCostUsd)}` : '—',
+        sub:   'fees − gas',
+        tone:  st ? (st.feesCollectedUsd - st.gasCostUsd >= 0 ? 'pos' : 'neg') as 'pos' | 'neg' : undefined,
+      },
+      {
+        label: 'Fees collected',
+        value: st ? formatUsd(st.feesCollectedUsd) : '—',
+        sub:   `${daysRunning(s.createdAt)}d running`,
+        tone:  undefined,
+      },
+      {
+        label: 'Time in range',
+        value: st ? `${st.timeInRangePct.toFixed(1)}%` : '—',
+        sub:   st ? `${st.inRangeTicks} / ${st.totalPollTicks} ticks` : undefined,
+        tone:  st ? (st.timeInRangePct >= 70 ? 'pos' : st.timeInRangePct < 40 ? 'neg' : undefined) as 'pos' | 'neg' | undefined : undefined,
+      },
+      {
+        label: 'Gas spent',
+        value: st ? formatUsd(st.gasCostUsd) : '—',
+        sub:   st ? `${st.totalRebalances} rebalances` : undefined,
+        tone:  undefined,
+      },
+    ]
+
+    return (
+      <React.Fragment key={s.id}>
+        {/* Stats grid */}
+        <div className="grid grid-cols-4 gap-3 mb-4">
+          {statItems.map(item => (
+            <div key={item.label} className="bg-white/60 backdrop-blur-sm border border-white/80 rounded-2xl p-4">
+              <div className="text-[10.5px] font-semibold uppercase tracking-[0.08em] text-gray-400">{item.label}</div>
+              <div className={`text-[22px] font-bold tracking-tight mt-1.5 font-mono ${
+                item.tone === 'pos' ? 'accent-text' : item.tone === 'neg' ? 'text-red-500' : 'text-gray-900'
+              }`}>{item.value}</div>
+              {item.sub && <div className="text-[11px] text-gray-500 mt-1">{item.sub}</div>}
+            </div>
+          ))}
+        </div>
+
+        {/* Current position card */}
+        <div className="bg-white/60 backdrop-blur-sm border border-white/80 rounded-2xl overflow-hidden mb-4">
+          <div className="px-5 pt-4 pb-3 border-b border-black/5 flex items-center justify-between">
+            <div className="text-[10.5px] font-semibold uppercase tracking-[0.08em] text-gray-400">Current position</div>
+            {posValueUsd !== null && (
+              <div className="text-[13px] font-bold font-mono text-gray-900">{formatUsd(posValueUsd)}</div>
+            )}
+          </div>
+          {(liveT0 !== null && liveT1 !== null) ? (
+            <>
+              <div className="grid grid-cols-2 divide-x divide-black/5">
+                <div className="px-5 py-4">
+                  <div className="text-[10.5px] font-semibold text-gray-400 mb-1.5">{label0}</div>
+                  <div className="text-[18px] font-bold font-mono text-gray-900 leading-none">{liveT0.toFixed(6)}</div>
+                  {ethPrice > 0 && (
+                    <div className="text-[11px] font-mono text-gray-400 mt-1">
+                      {formatUsd(liveT0 * (label0.includes('WETH') ? ethPrice : 1))}
+                    </div>
+                  )}
+                </div>
+                <div className="px-5 py-4">
+                  <div className="text-[10.5px] font-semibold text-gray-400 mb-1.5">{label1}</div>
+                  <div className="text-[18px] font-bold font-mono text-gray-900 leading-none">{liveT1.toFixed(2)}</div>
+                  {ethPrice > 0 && (
+                    <div className="text-[11px] font-mono text-gray-400 mt-1">
+                      {formatUsd(liveT1 * (label1.includes('WETH') ? ethPrice : 1))}
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="border-t border-black/5 divide-y divide-black/5">
+                <div className="px-5 py-3 flex items-center justify-between">
+                  <span className="text-[11px] text-gray-400 flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-sky-400" />
+                    Unclaimed fees
+                  </span>
+                  <div className="text-right">
+                    {unclaimed && (unclaimed.t0 > 0 || unclaimed.t1 > 0) ? (
+                      <>
+                        <div className="text-[12px] font-semibold font-mono accent-text">
+                          {unclaimed.t0 > 0 && unclaimed.t1 > 0
+                            ? `${unclaimed.t0.toFixed(6)} ${label0} + ${unclaimed.t1.toFixed(2)} ${label1}`
+                            : unclaimed.t0 > 0
+                              ? `${unclaimed.t0.toFixed(6)} ${label0}`
+                              : `${unclaimed.t1.toFixed(2)} ${label1}`}
+                        </div>
+                        <div className="text-[11px] font-mono text-gray-400">+{formatUsd(unclaimed.usd)}</div>
+                      </>
+                    ) : (
+                      <span className="text-[12px] font-mono text-gray-400">—</span>
+                    )}
+                  </div>
+                </div>
+                {(() => {
+                  const p0 = rawToFloat(s.pendingToken0, dec0)
+                  const p1 = rawToFloat(s.pendingToken1, dec1)
+                  const pendingUsd = ethPrice > 0
+                    ? (label0.includes('WETH') ? p0 * ethPrice + p1 : p1 * ethPrice + p0)
+                    : null
+                  return (
+                    <div className="px-5 py-3 flex items-center justify-between">
+                      <span className="text-[11px] text-gray-400 flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                        Pending
+                      </span>
+                      <span className={`text-[12px] font-semibold font-mono ${pendingUsd && pendingUsd > 0 ? 'text-amber-600' : 'text-gray-400'}`}>
+                        {pendingUsd != null && (p0 > 0 || p1 > 0)
+                          ? `${p0 > 0 ? `${p0.toFixed(6)} ${label0}` : ''}${p0 > 0 && p1 > 0 ? ' + ' : ''}${p1 > 0 ? `${p1.toFixed(2)} ${label1}` : ''}`
+                          : '—'}
+                      </span>
+                    </div>
+                  )
+                })()}
+              </div>
+            </>
+          ) : (
+            <div className="flex items-center gap-2 text-gray-400 text-sm px-5 py-6">
+              <svg className="w-4 h-4 animate-spin shrink-0" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+              </svg>
+              Loading…
+            </div>
+          )}
+        </div>
+
+        {/* Active position + balance card */}
+        <div className="bg-white/60 backdrop-blur-sm border border-white/80 rounded-2xl px-4 py-3 mb-4">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <div className="text-[13px] font-bold text-gray-900">{label0}/{label1} · {feeLabel(s.fee)}</div>
+              <div className="text-[10px] font-semibold uppercase tracking-[0.07em] text-gray-400">position</div>
+            </div>
+            {inRange !== null && (
+              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10.5px] font-semibold border ${
+                inRange ? 'accent-bg accent-text accent-border' : 'bg-red-50 text-red-700 border-red-200'
+              }`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${inRange ? 'accent-dot' : 'bg-red-500'}`} />
+                {inRange ? 'In range' : 'Out of range'}
+              </span>
+            )}
+          </div>
+
+          {rangeBar ? (
+            <>
+              <div className="h-2 rounded-full stripes relative overflow-hidden">
+                <div
+                  className={`absolute top-0 bottom-0 border-y-2 ${inRange ? 'accent-bg accent-border' : 'bg-red-50 border-red-200'}`}
+                  style={{ left: `${rangeBar.loPct}%`, right: `${100 - rangeBar.hiPct}%` }}
+                />
+                <div className="absolute top-0 bottom-0 w-[2px] bg-gray-900" style={{ left: `${rangeBar.curPct}%` }} />
+              </div>
+              <div className="grid grid-cols-3 mt-1.5 mb-3">
+                <div>
+                  <div className="text-[9px] font-semibold uppercase tracking-[0.07em] text-gray-400">Min</div>
+                  <div className="text-[11px] font-mono font-semibold text-gray-600">${formatPrice(rangeBar.lo)}</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-[9px] font-semibold uppercase tracking-[0.07em] text-gray-400">Current</div>
+                  <div className="text-[11px] font-mono font-bold text-gray-900">${formatPrice(rangeBar.cur)}</div>
+                </div>
+                <div className="text-right">
+                  <div className="text-[9px] font-semibold uppercase tracking-[0.07em] text-gray-400">Max</div>
+                  <div className="text-[11px] font-mono font-semibold text-gray-600">${formatPrice(rangeBar.hi)}</div>
+                </div>
+              </div>
+              {liveToken0 && liveToken1 && ethPrice > 0 && (
+                <div className="border-t border-black/5 pt-3">
+                  <TokenRatioBar
+                    token0Raw={liveToken0} token1Raw={liveToken1}
+                    dec0={dec0} dec1={dec1} label0={label0} label1={label1} ethPrice={ethPrice}
+                  />
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="flex items-center gap-2 text-gray-400 text-sm py-6">
+              <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+              </svg>
+              Loading…
+            </div>
+          )}
+        </div>
+
+        {/* Config card */}
+        {(() => {
+          const days = daysRunning(s.createdAt)
+          return (
+            <div className="bg-white/60 backdrop-blur-sm border border-white/80 rounded-2xl mb-4 overflow-hidden">
+              <div className="px-5 pt-4 pb-3 border-b border-black/5">
+                <div className="text-[10.5px] font-semibold uppercase tracking-[0.08em] text-gray-400">Config</div>
+              </div>
+              <div className="px-5 py-4">
+                <div className="flex flex-wrap gap-2 mb-3">
+                  {[
+                    `±${(s.rangePercent * 100).toFixed(0)}% range`,
+                    `${(s.slippageTolerance * 100).toFixed(2)}% slip`,
+                    `${s.pollIntervalSeconds}s poll`,
+                    feeLabel(s.fee) + ' fee',
+                  ].map(tag => (
+                    <span key={tag} className="inline-flex items-center px-2.5 py-1 rounded-lg bg-white/70 border border-white/90 text-xs font-semibold text-gray-600 shadow-sm">
+                      {tag}
+                    </span>
+                  ))}
+                </div>
+                <div className="space-y-0.5">
+                  <InfoRow label="Started" value={`${new Date(s.createdAt).toLocaleDateString()} (${days}d ago)`} />
+                  {s.initialToken0Amount && (
+                    <InfoRow label={`Deposit ${label0}`} value={<RawAmount amount={s.initialToken0Amount} decimals={dec0} label={label0} />} />
+                  )}
+                  {s.initialToken1Amount && (
+                    <InfoRow label={`Deposit ${label1}`} value={<RawAmount amount={s.initialToken1Amount} decimals={dec1} label={label1} />} />
+                  )}
+                </div>
+              </div>
+            </div>
+          )
+        })()}
+
+        {/* Activity timeline */}
+        <div className="bg-white/60 backdrop-blur-sm border border-white/80 rounded-2xl p-5">
+          <div className="text-[10.5px] font-semibold uppercase tracking-[0.08em] text-gray-400 mb-3">Activity</div>
+          <ActivityTimeline
+            strategy={s} stats={st}
+            events={[...(rebalances[s.id] ?? [])]}
+            dec0={dec0} dec1={dec1} label0={label0} label1={label1}
+          />
+        </div>
+      </React.Fragment>
+    )
+  }
+
+  const activeStrategy = activeStrategies[0]
+  const pairLabel = activeStrategy
+    ? `${tokenLabel(activeStrategy.token0)}/${tokenLabel(activeStrategy.token1)} · ${feeLabel(activeStrategy.fee)}`
+    : 'Uniswap auto-rebalance'
+
   return (
     <div>
       {/* Header */}
-      <div className="flex flex-wrap items-start justify-between gap-y-3 mb-7">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-100">{view === 'closed' ? 'Closed Strategies' : 'Dashboard'}</h1>
-          <p className="text-sm text-slate-400 mt-0.5">{view === 'closed' ? 'Historical records' : 'Uniswap v3 · Arbitrum'}</p>
+      {view === 'dashboard' ? (
+        <header className="mb-6 flex items-end justify-between">
+          <div>
+            <div className="text-[11px] font-semibold uppercase tracking-[0.1em] text-gray-400">lagrangefi</div>
+            <h1 className="text-[26px] font-bold tracking-tight mt-1 text-gray-900">{pairLabel}</h1>
+          </div>
+          <div className="flex items-center gap-3">
+            {refreshing && (
+              <span className="text-[11px] font-mono text-gray-400 flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+                Refreshing
+              </span>
+            )}
+            {lastUpdated && !refreshing && (
+              <span className="text-[11px] font-mono text-gray-400">{lastUpdated.toLocaleTimeString()}</span>
+            )}
+            <div className="text-[11px] font-mono text-gray-500 flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full accent-dot" />
+              Live · Arbitrum
+            </div>
+            {hasActive && activeStrategy ? (
+              confirmStopId !== activeStrategy.id ? (
+                <button onClick={() => setConfirmStopId(activeStrategy.id)}
+                  className="inline-flex items-center gap-2 text-[12px] font-semibold text-red-500 border border-red-200 hover:bg-red-50 px-3.5 py-1.5 rounded-xl transition-colors">
+                  <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+                  Stop strategy
+                </button>
+              ) : (
+                <div className="flex items-center gap-2 bg-white/80 border border-red-100 rounded-xl px-3 py-1.5 shadow-sm">
+                  <span className="text-[11px] text-gray-500">{stoppingId === activeStrategy.id ? 'Stopping…' : 'Stop permanently?'}</span>
+                  <button onClick={() => handleStop(activeStrategy.id)} disabled={stoppingId === activeStrategy.id}
+                    className="text-[11px] font-bold text-white bg-red-500 hover:bg-red-600 px-2.5 py-1 rounded-lg disabled:opacity-50 transition-colors">
+                    {stoppingId === activeStrategy.id ? '…' : 'Confirm'}
+                  </button>
+                  {stoppingId !== activeStrategy.id && (
+                    <button onClick={() => setConfirmStopId(null)} className="text-[11px] text-gray-400 hover:text-gray-600 transition-colors">Cancel</button>
+                  )}
+                </div>
+              )
+            ) : (
+              <button
+                onClick={openCreate}
+                className="inline-flex items-center gap-2 bg-gray-900 hover:bg-gray-800 text-white text-[12px] font-semibold px-3.5 py-1.5 rounded-xl shadow-sm hover:shadow transition-all"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                </svg>
+                New strategy
+              </button>
+            )}
+          </div>
+        </header>
+      ) : (
+        <div className="flex flex-wrap items-start justify-between gap-y-3 mb-7">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Closed Strategies</h1>
+            <p className="text-sm text-gray-500 mt-0.5">Historical records</p>
+          </div>
+          <div className="flex items-center gap-3 mt-1">
+            {refreshing ? (
+              <span className="flex items-center gap-1.5 text-xs text-gray-400">
+                <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+                Refreshing
+              </span>
+            ) : lastUpdated ? (
+              <span className="text-xs text-gray-400">Updated {lastUpdated.toLocaleTimeString()}</span>
+            ) : null}
+          </div>
         </div>
-        <div className="flex items-center gap-3 mt-1">
-          {refreshing ? (
-            <span className="flex items-center gap-1.5 text-xs text-slate-500">
-              <span className="w-1.5 h-1.5 rounded-full bg-sky-400 animate-pulse" />
-              Refreshing
-            </span>
-          ) : lastUpdated ? (
-            <span className="text-xs text-slate-500">Updated {lastUpdated.toLocaleTimeString()}</span>
-          ) : null}
-          {view === 'dashboard' && (
-            <button
-              onClick={openCreate}
-              disabled={hasActive}
-              title={hasActive ? 'Stop your active strategy before creating a new one' : undefined}
-              className="inline-flex items-center gap-2 bg-emerald-400 hover:bg-emerald-300 disabled:opacity-40 disabled:cursor-not-allowed text-slate-950 text-sm font-semibold px-4 py-2 rounded-xl shadow-sm hover:shadow transition-all"
-            >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-              </svg>
-              New strategy
-            </button>
-          )}
-        </div>
-      </div>
+      )}
 
       {error && (
-        <div className="mb-5 flex items-center justify-between bg-rose-500/10 border border-rose-500/30 text-rose-300 text-sm rounded-xl px-4 py-3">
+        <div className="mb-5 flex items-center justify-between bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl px-4 py-3">
           {error}
-          <button onClick={() => setError(null)} className="ml-3 text-rose-400 hover:text-rose-300 shrink-0">
+          <button onClick={() => setError(null)} className="ml-3 text-red-400 hover:text-red-600 shrink-0">
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
             </svg>
@@ -1675,11 +1976,11 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
 
       {/* ── Create form ──────────────────────────────────────────────────── */}
       {view === 'dashboard' && showCreate && (!hasActive || formState === 'success') && (
-        <div className="bg-slate-800/70 backdrop-blur-xl rounded-2xl border border-slate-700 shadow-lg shadow-black/30 p-6 mb-6">
+        <div className="bg-white/60 backdrop-blur-xl rounded-2xl border border-white/70 shadow-lg shadow-black/5 p-6 mb-6">
           <div className="flex items-center justify-between mb-5">
-            <h2 className="text-base font-semibold text-slate-100">New strategy</h2>
+            <h2 className="text-base font-semibold text-gray-900">New strategy</h2>
             {formState !== 'submitting' && (
-              <button onClick={closeCreate} className="text-slate-500 hover:text-slate-300 transition-colors">
+              <button onClick={closeCreate} className="text-gray-400 hover:text-gray-600 transition-colors">
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                 </svg>
@@ -1689,20 +1990,20 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
 
           {formState === 'success' && successData && (
             <div className="space-y-4">
-              <div className="flex items-center gap-3 bg-emerald-500/10 border border-emerald-500/30 rounded-xl px-4 py-3">
-                <span className="w-6 h-6 rounded-full bg-emerald-500 text-slate-950 flex items-center justify-center text-xs font-bold shrink-0">✓</span>
+              <div className="flex items-center gap-3 bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3">
+                <span className="w-6 h-6 rounded-full bg-emerald-500 text-white flex items-center justify-center text-xs font-bold shrink-0">✓</span>
                 <div>
-                  <p className="text-sm font-semibold text-emerald-200">Strategy started!</p>
-                  <p className="text-xs text-emerald-400 font-mono">Position NFT #{successData.tokenId}</p>
+                  <p className="text-sm font-semibold text-emerald-800">Strategy started!</p>
+                  <p className="text-xs text-emerald-600 font-mono">Position NFT #{successData.tokenId}</p>
                 </div>
               </div>
               {successData.txHashes.length > 0 && (
-                <div className="bg-slate-800/60 backdrop-blur-sm border border-slate-700 rounded-2xl p-4 shadow-sm">
-                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Transactions</p>
+                <div className="bg-white/50 backdrop-blur-sm border border-white/70 rounded-2xl p-4 shadow-sm">
+                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Transactions</p>
                   <TxList hashes={successData.txHashes} steps={['Approve', 'Mint Position']} />
                 </div>
               )}
-              <button onClick={closeCreate} className="text-sm font-medium text-slate-300 hover:text-slate-100 transition-colors">
+              <button onClick={closeCreate} className="text-sm font-medium text-gray-600 hover:text-gray-900 transition-colors">
                 Close
               </button>
             </div>
@@ -1711,14 +2012,14 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
           {formState !== 'success' && (
             <form onSubmit={handleCreate} className="space-y-5">
               <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1.5">Strategy name</label>
+                <label className="block text-xs font-medium text-gray-600 mb-1.5">Strategy name</label>
                 <input type="text" placeholder="My ETH/USDC strategy" value={createName}
                   onChange={e => setCreateName(e.target.value)} required
-                  className="w-full bg-slate-700/60 border border-slate-600 rounded-xl px-3 py-2.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:bg-slate-700 transition-colors" />
+                  className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:border-blue-500 focus:bg-white transition-colors" />
               </div>
 
               {walletBalances && (
-                <div className="bg-sky-500/10 border border-sky-500/20 rounded-xl px-4 py-3 text-xs text-sky-300 flex flex-wrap gap-x-3 gap-y-1">
+                <div className="bg-blue-50/60 border border-blue-100 rounded-xl px-4 py-3 text-xs text-blue-700 flex flex-wrap gap-x-3 gap-y-1">
                   <span>Wallet: <span className="font-mono font-medium">{walletBalances.address.slice(0, 8)}…</span></span>
                   <span className="font-medium">{Number(walletBalances.eth).toFixed(4)} ETH</span>
                   <span className="font-medium">{Number(walletBalances.usdc).toLocaleString('en-US', { maximumFractionDigits: 0 })} USDC</span>
@@ -1729,10 +2030,10 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <div className="flex justify-between items-baseline mb-1.5">
-                      <label className="text-xs font-medium text-slate-300">ETH amount</label>
+                      <label className="text-xs font-medium text-gray-600">ETH amount</label>
                       {walletBalances && (
                         <button type="button" onClick={() => setEthAmount(Number(walletBalances.eth).toFixed(4))}
-                          className="text-xs text-sky-400 hover:text-sky-300 font-mono">
+                          className="text-xs text-blue-600 hover:text-blue-700 font-mono">
                           Max {Number(walletBalances.eth).toFixed(4)}
                         </button>
                       )}
@@ -1740,16 +2041,16 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
                     <div className="relative">
                       <input type="number" min="0" step="0.0001" placeholder="0.0" value={ethAmount}
                         onChange={e => setEthAmount(e.target.value)}
-                        className="w-full bg-slate-700/60 border border-slate-600 rounded-xl px-3 py-2.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:bg-slate-700 pr-12" />
-                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-500 font-medium">ETH</span>
+                        className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:border-blue-500 focus:bg-white pr-12" />
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-400 font-medium">ETH</span>
                     </div>
                   </div>
                   <div>
                     <div className="flex justify-between items-baseline mb-1.5">
-                      <label className="text-xs font-medium text-slate-300">USDC amount</label>
+                      <label className="text-xs font-medium text-gray-600">USDC amount</label>
                       {walletBalances && (
                         <button type="button" onClick={() => setUsdcAmount(Number(walletBalances.usdc).toFixed(2))}
-                          className="text-xs text-sky-400 hover:text-sky-300 font-mono">
+                          className="text-xs text-blue-600 hover:text-blue-700 font-mono">
                           Max {Number(walletBalances.usdc).toLocaleString('en-US', { maximumFractionDigits: 0 })}
                         </button>
                       )}
@@ -1757,22 +2058,22 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
                     <div className="relative">
                       <input type="number" min="0" step="any" placeholder="0.0" value={usdcAmount}
                         onChange={e => setUsdcAmount(e.target.value)}
-                        className="w-full bg-slate-700/60 border border-slate-600 rounded-xl px-3 py-2.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:bg-slate-700 pr-14" />
-                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-500 font-medium">USDC</span>
+                        className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:border-blue-500 focus:bg-white pr-14" />
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-400 font-medium">USDC</span>
                     </div>
                   </div>
                 </div>
               )}
 
               <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1.5">Fee tier</label>
+                <label className="block text-xs font-medium text-gray-600 mb-1.5">Fee tier</label>
                 <div className="grid grid-cols-4 gap-2">
                   {FEE_TIERS.map(ft => (
                     <button key={ft.value} type="button" onClick={() => setFeeTier(ft.value)}
                       className={`py-2 rounded-xl text-xs font-semibold border transition-colors ${
                         feeTier === ft.value
-                          ? 'bg-emerald-400 border-emerald-400 text-slate-950'
-                          : 'bg-slate-800 border-slate-600 text-slate-300 hover:border-slate-600'
+                          ? 'bg-gray-900 border-gray-900 text-white'
+                          : 'bg-white border-gray-200 text-gray-600 hover:border-gray-400'
                       }`}>
                       {ft.label}
                     </button>
@@ -1781,55 +2082,55 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                  Price range — <span className="text-slate-100 font-semibold">±{createRange}%</span> from current price
+                <label className="block text-xs font-medium text-gray-600 mb-1.5">
+                  Price range — <span className="text-gray-900 font-semibold">±{createRange}%</span> from current price
                 </label>
                 <input type="range" min="1" max="20" step="1" value={createRange}
                   onChange={e => setCreateRange(Number(e.target.value))}
                   className="w-full accent-gray-900" />
-                <div className="flex justify-between text-xs text-slate-500 mt-1">
+                <div className="flex justify-between text-xs text-gray-400 mt-1">
                   <span>1% tight</span><span>20% wide</span>
                 </div>
               </div>
 
               <div>
                 <button type="button" onClick={() => setShowAdvanced(v => !v)}
-                  className="text-xs text-slate-500 hover:text-slate-300 flex items-center gap-1 transition-colors">
+                  className="text-xs text-gray-400 hover:text-gray-600 flex items-center gap-1 transition-colors">
                   <svg className={`w-3.5 h-3.5 transition-transform ${showAdvanced ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <polyline points="9 18 15 12 9 6" />
                   </svg>
                   Advanced settings
                 </button>
                 {showAdvanced && (
-                  <div className="mt-3 space-y-4 bg-slate-800/60 backdrop-blur-sm border border-slate-700 rounded-2xl p-4 shadow-sm">
+                  <div className="mt-3 space-y-4 bg-white/50 backdrop-blur-sm border border-white/70 rounded-2xl p-4 shadow-sm">
                     <div className="grid grid-cols-2 gap-3">
                       <div>
-                        <label className="block text-xs font-medium text-slate-300 mb-1.5">Slippage (%)</label>
+                        <label className="block text-xs font-medium text-gray-600 mb-1.5">Slippage (%)</label>
                         <input type="number" step="0.01" min="0.01" max="5" value={createSlippage}
                           onChange={e => setCreateSlippage(e.target.value)} required
-                          className="w-full bg-slate-700/60 border border-slate-600 rounded-xl px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:border-emerald-500 focus:bg-slate-700 transition-colors" />
+                          className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:border-blue-500 focus:bg-white transition-colors" />
                       </div>
                       <div>
-                        <label className="block text-xs font-medium text-slate-300 mb-1.5">Poll interval (s)</label>
+                        <label className="block text-xs font-medium text-gray-600 mb-1.5">Poll interval (s)</label>
                         <input type="number" min="30" max="3600" value={createInterval}
                           onChange={e => setCreateInterval(e.target.value)} required
-                          className="w-full bg-slate-700/60 border border-slate-600 rounded-xl px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:border-emerald-500 focus:bg-slate-700 transition-colors" />
+                          className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:border-blue-500 focus:bg-white transition-colors" />
                       </div>
                     </div>
-                    <div className="pt-2 border-t border-slate-700">
+                    <div className="pt-2 border-t border-gray-100">
                       <div className="flex items-center gap-2 mb-2">
                         <input type="checkbox" id="useRegister" checked={createMode === 'register'}
                           onChange={e => setCreateMode(e.target.checked ? 'register' : 'mint')}
                           className="accent-gray-900" />
-                        <label htmlFor="useRegister" className="text-xs font-medium text-slate-300">
+                        <label htmlFor="useRegister" className="text-xs font-medium text-gray-600">
                           Track existing position NFT instead
                         </label>
                       </div>
                       {createMode === 'register' && (
                         <div>
-                          <label className="block text-xs font-medium text-slate-300 mb-1.5">Position token ID</label>
+                          <label className="block text-xs font-medium text-gray-600 mb-1.5">Position token ID</label>
                           <input
-                            className="w-full bg-slate-700/60 border border-slate-600 rounded-xl px-3 py-2.5 text-sm text-slate-100 placeholder-slate-500 font-mono focus:outline-none focus:border-emerald-500 focus:bg-slate-700 transition-colors"
+                            className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-gray-900 placeholder-gray-400 font-mono focus:outline-none focus:border-blue-500 focus:bg-white transition-colors"
                             value={createTokenId} onChange={e => setCreateTokenId(e.target.value)}
                             placeholder="123456" required={createMode === 'register'} />
                         </div>
@@ -1839,42 +2140,42 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
                 )}
               </div>
 
-              <div className="bg-slate-800/60 backdrop-blur-sm border border-slate-700 rounded-2xl p-4 shadow-sm space-y-2">
-                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Summary</p>
+              <div className="bg-white/50 backdrop-blur-sm border border-white/70 rounded-2xl p-4 shadow-sm space-y-2">
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Summary</p>
                 {createMode === 'mint' ? (
                   <>
                     <div className="flex justify-between text-xs">
-                      <span className="text-slate-500">Deposit</span>
-                      <span className="text-slate-200 font-mono">{ethAmount || '0'} ETH + {usdcAmount || '0'} USDC</span>
+                      <span className="text-gray-400">Deposit</span>
+                      <span className="text-gray-700 font-mono">{ethAmount || '0'} ETH + {usdcAmount || '0'} USDC</span>
                     </div>
                     <div className="flex justify-between text-xs">
-                      <span className="text-slate-500">Pool</span>
-                      <span className="text-slate-200">WETH / USDC · {FEE_TIERS.find(f => f.value === feeTier)?.label}</span>
+                      <span className="text-gray-400">Pool</span>
+                      <span className="text-gray-700">WETH / USDC · {FEE_TIERS.find(f => f.value === feeTier)?.label}</span>
                     </div>
                   </>
                 ) : (
                   <div className="flex justify-between text-xs">
-                    <span className="text-slate-500">Position NFT</span>
-                    <span className="text-slate-200 font-mono">#{createTokenId || '—'}</span>
+                    <span className="text-gray-400">Position NFT</span>
+                    <span className="text-gray-700 font-mono">#{createTokenId || '—'}</span>
                   </div>
                 )}
                 <div className="flex justify-between text-xs">
-                  <span className="text-slate-500">Range</span>
-                  <span className="text-slate-200">±{createRange}% around current price</span>
+                  <span className="text-gray-400">Range</span>
+                  <span className="text-gray-700">±{createRange}% around current price</span>
                 </div>
                 <div className="flex justify-between text-xs">
-                  <span className="text-slate-500">Auto-rebalance</span>
-                  <span className="text-emerald-400 font-semibold">Enabled</span>
+                  <span className="text-gray-400">Auto-rebalance</span>
+                  <span className="text-emerald-600 font-semibold">Enabled</span>
                 </div>
               </div>
 
               {createError && (
-                <p className="text-sm text-rose-300 bg-rose-500/10 border border-rose-500/30 rounded-xl px-4 py-3">{createError}</p>
+                <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-xl px-4 py-3">{createError}</p>
               )}
 
               <div className="flex gap-2">
                 <button type="submit" disabled={formState === 'submitting'}
-                  className="inline-flex items-center gap-2 bg-emerald-400 hover:bg-emerald-300 disabled:opacity-50 disabled:cursor-not-allowed text-slate-950 text-sm font-semibold px-5 py-2.5 rounded-xl shadow-sm hover:shadow transition-all">
+                  className="inline-flex items-center gap-2 bg-gray-900 hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold px-5 py-2.5 rounded-xl shadow-sm hover:shadow transition-all">
                   {formState === 'submitting' ? (
                     <>
                       <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
@@ -1887,7 +2188,7 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
                 </button>
                 {formState !== 'submitting' && (
                   <button type="button" onClick={closeCreate}
-                    className="text-slate-400 hover:text-slate-100 text-sm font-medium px-4 py-2.5 rounded-xl border border-slate-600 hover:border-slate-600 bg-slate-800/70 hover:bg-slate-800/80 transition-all">
+                    className="text-gray-500 hover:text-gray-900 text-sm font-medium px-4 py-2.5 rounded-xl border border-gray-200 hover:border-gray-300 bg-white/60 hover:bg-white/80 transition-all">
                     Cancel
                   </button>
                 )}
@@ -1901,13 +2202,54 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
       {view === 'dashboard' ? (
         strategies.length === 0 ? (
           <OnboardingState hasWallet={user?.hasWallet ?? false} />
-        ) : activeStrategies.length > 0 ? (
-          activeStrategies.map(renderStrategyCard)
         ) : (
-          <div className="bg-slate-800/50 backdrop-blur-xl rounded-2xl border border-dashed border-slate-600 px-6 py-10 text-center">
-            <p className="text-sm font-medium text-slate-500">No active strategy</p>
-            <p className="text-xs text-slate-500 mt-1">Use the "New strategy" button above to get started.</p>
-          </div>
+          <>
+            {/* Tab switcher */}
+            <div className="inline-flex bg-white/60 backdrop-blur-sm border border-white/80 rounded-xl p-1 mb-4 gap-1">
+              {([
+                { id: 'active', label: 'Active',             count: activeStrategies.length },
+                { id: 'closed', label: 'Closed strategies',  count: closedStrategies.length },
+              ] as const).map(t => {
+                const on = dashTab === t.id
+                return (
+                  <button key={t.id} onClick={() => setDashTab(t.id)}
+                    className={`flex items-center gap-2 text-[12.5px] font-semibold px-3 py-1.5 rounded-lg transition-colors ${
+                      on ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-900'
+                    }`}>
+                    {t.label}
+                    <span className={`mono text-[10.5px] rounded-md px-1.5 py-0.5 ${
+                      on ? 'accent-bg accent-text' : 'bg-black/5 text-gray-500'
+                    }`}>
+                      {t.count}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+
+            {/* Tab content */}
+            {dashTab === 'active' ? (
+              activeStrategies.length > 0 ? (
+                activeStrategies.map(renderDashboardView)
+              ) : (
+                <div className="bg-white/40 backdrop-blur-xl rounded-2xl border border-dashed border-gray-200 px-6 py-10 text-center">
+                  <p className="text-sm font-medium text-gray-400">No active strategy</p>
+                  <p className="text-xs text-gray-400 mt-1">Use the "New strategy" button above to get started.</p>
+                </div>
+              )
+            ) : (
+              closedStrategies.length > 0 ? (
+                <div className="space-y-3">
+                  {closedStrategies.map(renderStrategyCard)}
+                </div>
+              ) : (
+                <div className="bg-white/40 backdrop-blur-xl rounded-2xl border border-dashed border-gray-200 px-6 py-10 text-center">
+                  <p className="text-sm font-medium text-gray-400">No closed strategies yet</p>
+                  <p className="text-xs text-gray-400 mt-1">Strategies you stop will appear here.</p>
+                </div>
+              )
+            )}
+          </>
         )
       ) : (
         closedStrategies.length > 0 ? (
@@ -1915,9 +2257,9 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
             {closedStrategies.map(renderStrategyCard)}
           </div>
         ) : (
-          <div className="bg-slate-800/50 backdrop-blur-xl rounded-2xl border border-dashed border-slate-600 px-6 py-10 text-center">
-            <p className="text-sm font-medium text-slate-500">No closed strategies yet</p>
-            <p className="text-xs text-slate-500 mt-1">Strategies you stop will appear here.</p>
+          <div className="bg-white/40 backdrop-blur-xl rounded-2xl border border-dashed border-gray-200 px-6 py-10 text-center">
+            <p className="text-sm font-medium text-gray-400">No closed strategies yet</p>
+            <p className="text-xs text-gray-400 mt-1">Strategies you stop will appear here.</p>
           </div>
         )
       )}

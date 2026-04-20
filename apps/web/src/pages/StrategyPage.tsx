@@ -1758,13 +1758,15 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
           {/* Right column: Position card */}
           <div className="lg:col-span-3 flex flex-col">
             <div className="bg-white/60 backdrop-blur-sm border border-white/80 rounded-2xl overflow-hidden flex-1">
-              {/* Header */}
-              <div className="px-5 pt-4 pb-3 border-b border-black/5">
-                <div className="flex items-center justify-between">
+
+              {/* Header: status + value + price row */}
+              <div className="px-4 pt-3 pb-2.5 border-b border-black/5">
+                {/* Top row: label, badge, position value */}
+                <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">
                     <div className="text-[10.5px] font-semibold uppercase tracking-[0.08em] text-gray-400">Position</div>
                     {inRange !== null && (
-                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10.5px] font-semibold border ${
+                      <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold border ${
                         inRange ? 'accent-bg accent-text accent-border' : 'bg-red-50 text-red-700 border-red-200'
                       }`}>
                         <span className={`w-1.5 h-1.5 rounded-full ${inRange ? 'accent-dot' : 'bg-red-500'}`} />
@@ -1776,68 +1778,86 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
                     <div className="text-[13px] font-bold font-mono text-gray-900">{formatUsd(posValueUsd)}</div>
                   )}
                 </div>
-                {ethPrice > 0 && (
-                  <div className="flex items-baseline gap-2 mt-2">
-                    <span className="text-[22px] font-bold font-mono text-gray-900 leading-none">
-                      ${ethPrice.toLocaleString('en-US', { maximumFractionDigits: 2 })}
-                    </span>
-                    <span className="text-xs text-gray-400">{label0}/{label1}{pos ? ` · ${feeLabel(pos.fee)}` : ''}</span>
-                  </div>
-                )}
+                {/* Entry → Current price */}
+                <div className="flex items-center gap-3">
+                  {s.openEthPriceUsd != null && (
+                    <div>
+                      <div className="text-[9px] font-semibold uppercase tracking-[0.07em] text-gray-400 leading-none mb-0.5">Entry</div>
+                      <div className="text-[13px] font-semibold font-mono text-gray-500">
+                        ${s.openEthPriceUsd.toLocaleString('en-US', { maximumFractionDigits: 2 })}
+                      </div>
+                    </div>
+                  )}
+                  {ethPrice > 0 && s.openEthPriceUsd != null && (
+                    <svg className="text-gray-300 shrink-0" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
+                    </svg>
+                  )}
+                  {ethPrice > 0 && (
+                    <div>
+                      <div className="text-[9px] font-semibold uppercase tracking-[0.07em] text-gray-400 leading-none mb-0.5">Now</div>
+                      <div className="flex items-baseline gap-1">
+                        <span className="text-[13px] font-semibold font-mono text-gray-900">
+                          ${ethPrice.toLocaleString('en-US', { maximumFractionDigits: 2 })}
+                        </span>
+                        {s.openEthPriceUsd != null && (() => {
+                          const pct = ((ethPrice - s.openEthPriceUsd) / s.openEthPriceUsd) * 100
+                          return (
+                            <span className={`text-[10px] font-semibold font-mono ${pct >= 0 ? 'accent-text' : 'text-red-400'}`}>
+                              {pct >= 0 ? '+' : ''}{pct.toFixed(1)}%
+                            </span>
+                          )
+                        })()}
+                      </div>
+                    </div>
+                  )}
+                  <div className="ml-auto text-[10px] text-gray-400">{label0}/{label1}{pos ? ` · ${feeLabel(pos.fee)}` : ''}</div>
+                </div>
               </div>
 
               {/* Price range bar */}
               {rangeBar && (
-                <div className="px-4 py-3 border-b border-black/5">
-                  <div className="h-2 rounded-full stripes relative overflow-hidden">
+                <div className="px-4 py-2 border-b border-black/5">
+                  <div className="h-1.5 rounded-full stripes relative overflow-hidden">
                     <div
                       className={`absolute top-0 bottom-0 border-y-2 ${inRange ? 'accent-bg accent-border' : 'bg-red-50 border-red-200'}`}
                       style={{ left: `${rangeBar.loPct}%`, right: `${100 - rangeBar.hiPct}%` }}
                     />
                     <div className="absolute top-0 bottom-0 w-[2px] bg-gray-900" style={{ left: `${rangeBar.curPct}%` }} />
                   </div>
-                  <div className="grid grid-cols-3 mt-1.5">
-                    <div>
-                      <div className="text-[9px] font-semibold uppercase tracking-[0.07em] text-gray-400">Min</div>
-                      <div className="text-[11px] font-mono font-semibold text-gray-600">${formatPrice(rangeBar.lo)}</div>
-                    </div>
-                    <div className="text-center">
-                      <div className="text-[9px] font-semibold uppercase tracking-[0.07em] text-gray-400">Current</div>
-                      <div className="text-[11px] font-mono font-bold text-gray-900">${formatPrice(rangeBar.cur)}</div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-[9px] font-semibold uppercase tracking-[0.07em] text-gray-400">Max</div>
-                      <div className="text-[11px] font-mono font-semibold text-gray-600">${formatPrice(rangeBar.hi)}</div>
-                    </div>
+                  <div className="flex justify-between mt-1">
+                    <span className="text-[10px] font-mono text-gray-400">${formatPrice(rangeBar.lo)}</span>
+                    <span className="text-[10px] font-mono font-semibold text-gray-700">${formatPrice(rangeBar.cur)}</span>
+                    <span className="text-[10px] font-mono text-gray-400">${formatPrice(rangeBar.hi)}</span>
                   </div>
                 </div>
               )}
 
-              {/* Token amounts + ratio */}
+              {/* Token amounts */}
               {(liveT0 !== null && liveT1 !== null) ? (
                 <>
                   <div className="grid grid-cols-2 divide-x divide-black/5 border-b border-black/5">
-                    <div className="px-5 py-4">
-                      <div className="text-[10.5px] font-semibold text-gray-400 mb-1.5">{label0}</div>
-                      <div className="text-[18px] font-bold font-mono text-gray-900 leading-none">{liveT0.toFixed(6)}</div>
+                    <div className="px-4 py-2.5">
+                      <div className="text-[10px] font-semibold text-gray-400 mb-1">{label0}</div>
+                      <div className="text-[15px] font-bold font-mono text-gray-900 leading-none">{liveT0.toFixed(6)}</div>
                       {ethPrice > 0 && (
-                        <div className="text-[11px] font-mono text-gray-400 mt-1">
+                        <div className="text-[10px] font-mono text-gray-400 mt-0.5">
                           {formatUsd(liveT0 * (label0.includes('WETH') ? ethPrice : 1))}
                         </div>
                       )}
                     </div>
-                    <div className="px-5 py-4">
-                      <div className="text-[10.5px] font-semibold text-gray-400 mb-1.5">{label1}</div>
-                      <div className="text-[18px] font-bold font-mono text-gray-900 leading-none">{liveT1.toFixed(2)}</div>
+                    <div className="px-4 py-2.5">
+                      <div className="text-[10px] font-semibold text-gray-400 mb-1">{label1}</div>
+                      <div className="text-[15px] font-bold font-mono text-gray-900 leading-none">{liveT1.toFixed(2)}</div>
                       {ethPrice > 0 && (
-                        <div className="text-[11px] font-mono text-gray-400 mt-1">
+                        <div className="text-[10px] font-mono text-gray-400 mt-0.5">
                           {formatUsd(liveT1 * (label1.includes('WETH') ? ethPrice : 1))}
                         </div>
                       )}
                     </div>
                   </div>
                   {liveToken0 && liveToken1 && ethPrice > 0 && (
-                    <div className="px-5 py-3">
+                    <div className="px-4 py-2 border-b border-black/5">
                       <TokenRatioBar
                         token0Raw={liveToken0} token1Raw={liveToken1}
                         dec0={dec0} dec1={dec1} label0={label0} label1={label1} ethPrice={ethPrice}
@@ -1846,7 +1866,7 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
                   )}
                 </>
               ) : !rangeBar ? (
-                <div className="flex items-center gap-2 text-gray-400 text-sm px-5 py-6">
+                <div className="flex items-center gap-2 text-gray-400 text-sm px-4 py-4">
                   <svg className="w-4 h-4 animate-spin shrink-0" fill="none" viewBox="0 0 24 24">
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
@@ -1856,22 +1876,28 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
               ) : null}
 
               {/* Config footer */}
-              <div className="px-5 py-3 border-t border-black/5 bg-black/[0.015]">
-                <div className="flex flex-wrap gap-1.5 mb-2">
-                  {[
-                    `±${(s.rangePercent * 100).toFixed(0)}% range`,
-                    `${(s.slippageTolerance * 100).toFixed(2)}% slip`,
-                    `${s.pollIntervalSeconds}s poll`,
-                    feeLabel(s.fee) + ' fee',
-                  ].map(tag => (
-                    <span key={tag} className="inline-flex items-center px-2 py-0.5 rounded-md bg-white/80 border border-black/8 text-[10.5px] font-semibold text-gray-500">
-                      {tag}
-                    </span>
-                  ))}
-                </div>
-                <div className="space-y-0.5">
-                  <InfoRow label="Started" value={`${new Date(s.createdAt).toLocaleDateString()} (${days}d ago)`} />
-                </div>
+              <div className="px-4 py-2.5 border-t border-black/5 bg-black/[0.015] flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
+                {[
+                  `±${(s.rangePercent * 100).toFixed(0)}% range`,
+                  `${(s.slippageTolerance * 100).toFixed(2)}% slip`,
+                  `${s.pollIntervalSeconds}s poll`,
+                  feeLabel(s.fee) + ' fee',
+                ].map(tag => (
+                  <span key={tag} className="inline-flex items-center px-2 py-0.5 rounded-md bg-white/80 border border-black/8 text-[10.5px] font-semibold text-gray-500">
+                    {tag}
+                  </span>
+                ))}
+                <span className="ml-auto text-[10.5px] text-gray-400">
+                  {(() => {
+                    const ms = Date.now() - new Date(s.createdAt).getTime()
+                    const h = Math.floor(ms / 3_600_000)
+                    const d = Math.floor(h / 24)
+                    const rem = h % 24
+                    const m = Math.floor((ms % 3_600_000) / 60_000)
+                    const dur = d > 0 ? `${d}d ${rem}h ${m}m` : h > 0 ? `${h}h ${m}m` : `${m}m`
+                    return `Started ${new Date(s.createdAt).toLocaleDateString()} ${new Date(s.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · ${dur}`
+                  })()}
+                </span>
               </div>
             </div>
           </div>

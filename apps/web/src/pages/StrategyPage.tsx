@@ -1759,20 +1759,30 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
           <div className="lg:col-span-3 flex flex-col">
             <div className="bg-white/60 backdrop-blur-sm border border-white/80 rounded-2xl overflow-hidden flex-1">
               {/* Header */}
-              <div className="px-5 pt-4 pb-3 border-b border-black/5 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="text-[10.5px] font-semibold uppercase tracking-[0.08em] text-gray-400">Position</div>
-                  {inRange !== null && (
-                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10.5px] font-semibold border ${
-                      inRange ? 'accent-bg accent-text accent-border' : 'bg-red-50 text-red-700 border-red-200'
-                    }`}>
-                      <span className={`w-1.5 h-1.5 rounded-full ${inRange ? 'accent-dot' : 'bg-red-500'}`} />
-                      {inRange ? 'In range' : 'Out of range'}
-                    </span>
+              <div className="px-5 pt-4 pb-3 border-b border-black/5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="text-[10.5px] font-semibold uppercase tracking-[0.08em] text-gray-400">Position</div>
+                    {inRange !== null && (
+                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10.5px] font-semibold border ${
+                        inRange ? 'accent-bg accent-text accent-border' : 'bg-red-50 text-red-700 border-red-200'
+                      }`}>
+                        <span className={`w-1.5 h-1.5 rounded-full ${inRange ? 'accent-dot' : 'bg-red-500'}`} />
+                        {inRange ? 'In range' : 'Out of range'}
+                      </span>
+                    )}
+                  </div>
+                  {posValueUsd !== null && (
+                    <div className="text-[13px] font-bold font-mono text-gray-900">{formatUsd(posValueUsd)}</div>
                   )}
                 </div>
-                {posValueUsd !== null && (
-                  <div className="text-[13px] font-bold font-mono text-gray-900">{formatUsd(posValueUsd)}</div>
+                {ethPrice > 0 && (
+                  <div className="flex items-baseline gap-2 mt-2">
+                    <span className="text-[22px] font-bold font-mono text-gray-900 leading-none">
+                      ${ethPrice.toLocaleString('en-US', { maximumFractionDigits: 2 })}
+                    </span>
+                    <span className="text-xs text-gray-400">{label0}/{label1}{pos ? ` · ${feeLabel(pos.fee)}` : ''}</span>
+                  </div>
                 )}
               </div>
 

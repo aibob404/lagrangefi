@@ -1666,10 +1666,17 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
               <div className="px-5 pt-4 pb-3 border-b border-black/5 flex items-center justify-between">
                 <div className="text-[10.5px] font-semibold uppercase tracking-[0.08em] text-gray-400">Net P&L</div>
                 <div className="text-right">
-                  <div className={`text-[18px] font-bold font-mono ${
-                    netUsd == null ? 'text-gray-300' : netUsd >= 0 ? 'accent-text' : 'text-red-500'
-                  }`}>
-                    {netUsd == null ? '—' : (netUsd >= 0 ? '+' : '') + formatUsd(netUsd)}
+                  <div className="flex items-baseline gap-2">
+                    <div className={`text-[18px] font-bold font-mono ${
+                      netUsd == null ? 'text-gray-300' : netUsd >= 0 ? 'accent-text' : 'text-red-500'
+                    }`}>
+                      {netUsd == null ? '—' : (netUsd >= 0 ? '+' : '') + formatUsd(netUsd)}
+                    </div>
+                    {netUsd != null && s.initialValueUsd && s.initialValueUsd > 0 && (
+                      <div className={`text-[12px] font-semibold font-mono ${netUsd >= 0 ? 'accent-text' : 'text-red-400'}`}>
+                        {netUsd >= 0 ? '+' : ''}{((netUsd / s.initialValueUsd) * 100).toFixed(2)}%
+                      </div>
+                    )}
                   </div>
                   {apyPct != null && (
                     <div className={`text-[10px] font-semibold mt-0.5 ${apyPct >= 0 ? 'accent-text' : 'text-red-400'}`}>

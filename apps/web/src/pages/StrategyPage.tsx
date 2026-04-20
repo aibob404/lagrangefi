@@ -1644,228 +1644,229 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
       }
     })() : null
 
-    const statItems = [
-      {
-        label: 'Net P&L',
-        value: st ? `${st.feesCollectedUsd - st.gasCostUsd >= 0 ? '+' : ''}${formatUsd(st.feesCollectedUsd - st.gasCostUsd)}` : '—',
-        sub:   'fees − gas',
-        tone:  st ? (st.feesCollectedUsd - st.gasCostUsd >= 0 ? 'pos' : 'neg') as 'pos' | 'neg' : undefined,
-      },
-      {
-        label: 'Fees collected',
-        value: st ? formatUsd(st.feesCollectedUsd) : '—',
-        sub:   `${daysRunning(s.createdAt)}d running`,
-        tone:  undefined,
-      },
-      {
-        label: 'Time in range',
-        value: st ? `${st.timeInRangePct.toFixed(1)}%` : '—',
-        sub:   st ? `${st.inRangeTicks} / ${st.totalPollTicks} ticks` : undefined,
-        tone:  st ? (st.timeInRangePct >= 70 ? 'pos' : st.timeInRangePct < 40 ? 'neg' : undefined) as 'pos' | 'neg' | undefined : undefined,
-      },
-      {
-        label: 'Gas spent',
-        value: st ? formatUsd(st.gasCostUsd) : '—',
-        sub:   st ? `${st.totalRebalances} rebalances` : undefined,
-        tone:  undefined,
-      },
-    ]
+    const totalFeesEarnedUsd = (st?.feesCollectedUsd ?? 0) + (unclaimed?.usd ?? 0)
+    const positionDelta = posValueUsd != null && s.initialValueUsd != null ? posValueUsd - s.initialValueUsd : null
+    const swapCostUsd = st?.swapCostUsd ?? 0
+    const netUsd = st != null ? (positionDelta ?? 0) + totalFeesEarnedUsd - st.gasCostUsd - swapCostUsd : null
+    const days = daysRunning(s.createdAt)
+    const apyPct = (netUsd != null && s.initialValueUsd && s.initialValueUsd > 0 && days > 0)
+      ? computeAPY(netUsd, s.initialValueUsd, days)
+      : null
 
     return (
       <React.Fragment key={s.id}>
-        {/* Stats grid */}
-        <div className="grid grid-cols-4 gap-3 mb-4">
-          {statItems.map(item => (
-            <div key={item.label} className="bg-white/60 backdrop-blur-sm border border-white/80 rounded-2xl p-4">
-              <div className="text-[10.5px] font-semibold uppercase tracking-[0.08em] text-gray-400">{item.label}</div>
-              <div className={`text-[22px] font-bold tracking-tight mt-1.5 font-mono ${
-                item.tone === 'pos' ? 'accent-text' : item.tone === 'neg' ? 'text-red-500' : 'text-gray-900'
-              }`}>{item.value}</div>
-              {item.sub && <div className="text-[11px] text-gray-500 mt-1">{item.sub}</div>}
-            </div>
-          ))}
-        </div>
+        {/* Top section: stacks on mobile/tablet, 2+3 cols on desktop */}
+        <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 mb-4 lg:items-stretch">
 
-        {/* Current position card */}
-        <div className="bg-white/60 backdrop-blur-sm border border-white/80 rounded-2xl overflow-hidden mb-4">
-          <div className="px-5 pt-4 pb-3 border-b border-black/5 flex items-center justify-between">
-            <div className="text-[10.5px] font-semibold uppercase tracking-[0.08em] text-gray-400">Current position</div>
-            {posValueUsd !== null && (
-              <div className="text-[13px] font-bold font-mono text-gray-900">{formatUsd(posValueUsd)}</div>
-            )}
-          </div>
-          {(liveT0 !== null && liveT1 !== null) ? (
-            <>
-              <div className="grid grid-cols-2 divide-x divide-black/5">
-                <div className="px-5 py-4">
-                  <div className="text-[10.5px] font-semibold text-gray-400 mb-1.5">{label0}</div>
-                  <div className="text-[18px] font-bold font-mono text-gray-900 leading-none">{liveT0.toFixed(6)}</div>
-                  {ethPrice > 0 && (
-                    <div className="text-[11px] font-mono text-gray-400 mt-1">
-                      {formatUsd(liveT0 * (label0.includes('WETH') ? ethPrice : 1))}
-                    </div>
-                  )}
-                </div>
-                <div className="px-5 py-4">
-                  <div className="text-[10.5px] font-semibold text-gray-400 mb-1.5">{label1}</div>
-                  <div className="text-[18px] font-bold font-mono text-gray-900 leading-none">{liveT1.toFixed(2)}</div>
-                  {ethPrice > 0 && (
-                    <div className="text-[11px] font-mono text-gray-400 mt-1">
-                      {formatUsd(liveT1 * (label1.includes('WETH') ? ethPrice : 1))}
+          {/* Left column: P&L summary */}
+          <div className="lg:col-span-2 flex flex-col gap-4">
+
+            {/* Net P&L card */}
+            <div className="bg-white/60 backdrop-blur-sm border border-white/80 rounded-2xl flex-1">
+              <div className="px-5 pt-4 pb-3 border-b border-black/5 flex items-center justify-between">
+                <div className="text-[10.5px] font-semibold uppercase tracking-[0.08em] text-gray-400">Net P&L</div>
+                <div className="text-right">
+                  <div className={`text-[18px] font-bold font-mono ${
+                    netUsd == null ? 'text-gray-300' : netUsd >= 0 ? 'accent-text' : 'text-red-500'
+                  }`}>
+                    {netUsd == null ? '—' : (netUsd >= 0 ? '+' : '') + formatUsd(netUsd)}
+                  </div>
+                  {apyPct != null && (
+                    <div className={`text-[10px] font-semibold mt-0.5 ${apyPct >= 0 ? 'accent-text' : 'text-red-400'}`}>
+                      {apyPct >= 0 ? '+' : ''}{apyPct.toFixed(1)}% APY
                     </div>
                   )}
                 </div>
               </div>
-              <div className="border-t border-black/5 divide-y divide-black/5">
-                <div className="px-5 py-3 flex items-center justify-between">
-                  <span className="text-[11px] text-gray-400 flex items-center gap-1.5">
-                    <span className="w-1.5 h-1.5 rounded-full bg-sky-400" />
-                    Unclaimed fees
-                  </span>
+              <div className="divide-y divide-black/5">
+                <div className="flex justify-between items-start py-2.5 px-5">
+                  <span className="text-xs font-medium text-gray-400">Invested</span>
                   <div className="text-right">
-                    {unclaimed && (unclaimed.t0 > 0 || unclaimed.t1 > 0) ? (
-                      <>
-                        <div className="text-[12px] font-semibold font-mono accent-text">
-                          {unclaimed.t0 > 0 && unclaimed.t1 > 0
-                            ? `${unclaimed.t0.toFixed(6)} ${label0} + ${unclaimed.t1.toFixed(2)} ${label1}`
-                            : unclaimed.t0 > 0
-                              ? `${unclaimed.t0.toFixed(6)} ${label0}`
-                              : `${unclaimed.t1.toFixed(2)} ${label1}`}
-                        </div>
-                        <div className="text-[11px] font-mono text-gray-400">+{formatUsd(unclaimed.usd)}</div>
-                      </>
-                    ) : (
-                      <span className="text-[12px] font-mono text-gray-400">—</span>
+                    <div className="text-xs font-semibold text-gray-800 font-mono">
+                      {s.initialValueUsd ? formatUsd(s.initialValueUsd) : '—'}
+                    </div>
+                    {(s.initialToken0Amount || s.initialToken1Amount) && (
+                      <div className="text-[10px] text-gray-400 mt-0.5">
+                        {s.initialToken0Amount && <RawAmount amount={s.initialToken0Amount} decimals={dec0} label={label0} />}
+                        {s.initialToken0Amount && s.initialToken1Amount && ' + '}
+                        {s.initialToken1Amount && <RawAmount amount={s.initialToken1Amount} decimals={dec1} label={label1} />}
+                      </div>
                     )}
                   </div>
                 </div>
-                {(() => {
-                  const p0 = rawToFloat(s.pendingToken0, dec0)
-                  const p1 = rawToFloat(s.pendingToken1, dec1)
-                  const pendingUsd = ethPrice > 0
-                    ? (label0.includes('WETH') ? p0 * ethPrice + p1 : p1 * ethPrice + p0)
-                    : null
-                  return (
-                    <div className="px-5 py-3 flex items-center justify-between">
-                      <span className="text-[11px] text-gray-400 flex items-center gap-1.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
-                        Pending
-                      </span>
-                      <span className={`text-[12px] font-semibold font-mono ${pendingUsd && pendingUsd > 0 ? 'text-amber-600' : 'text-gray-400'}`}>
-                        {pendingUsd != null && (p0 > 0 || p1 > 0)
-                          ? `${p0 > 0 ? `${p0.toFixed(6)} ${label0}` : ''}${p0 > 0 && p1 > 0 ? ' + ' : ''}${p1 > 0 ? `${p1.toFixed(2)} ${label1}` : ''}`
-                          : '—'}
-                      </span>
+                <div className="flex justify-between items-start py-2.5 px-5">
+                  <span className="text-xs font-medium text-gray-400">Fees earned</span>
+                  <div className="text-right">
+                    <div className="text-xs font-semibold font-mono accent-text">
+                      {st ? `+${formatUsd(totalFeesEarnedUsd)}` : '—'}
                     </div>
-                  )
-                })()}
+                    {unclaimed && unclaimed.usd > 0 && st && (
+                      <div className="text-[10px] text-gray-400 mt-0.5">
+                        {formatUsd(st.feesCollectedUsd)} collected · {formatUsd(unclaimed.usd)} unclaimed
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="flex justify-between items-start py-2.5 px-5">
+                  <span className="text-xs font-medium text-gray-400">Gas spent</span>
+                  <div className="text-right">
+                    <div className="text-xs font-semibold font-mono text-red-400">
+                      {st ? `−${formatUsd(st.gasCostUsd)}` : '—'}
+                    </div>
+                    {st && (
+                      <div className="text-[10px] text-gray-400 mt-0.5">{st.totalRebalances} rebalances</div>
+                    )}
+                  </div>
+                </div>
+                <div className="flex justify-between items-start py-2.5 px-5">
+                  <span className="text-xs font-medium text-gray-400">Swap costs</span>
+                  <div className="text-right">
+                    <div className="text-xs font-semibold font-mono text-red-400">
+                      {st ? (st.swapCostUsd != null && st.swapCostUsd > 0 ? `−${formatUsd(st.swapCostUsd)}` : '—') : '—'}
+                    </div>
+                    <div className="text-[10px] text-gray-400 mt-0.5">slippage on swaps</div>
+                  </div>
+                </div>
+                {st && (
+                  <>
+                    <div className="flex justify-between items-start py-2.5 px-5 bg-black/[0.015]">
+                      <span className="text-xs font-medium text-gray-400">Time in range</span>
+                      <div className="text-right">
+                        <div className={`text-xs font-semibold font-mono ${
+                          st.timeInRangePct >= 70 ? 'accent-text' : st.timeInRangePct < 40 ? 'text-red-400' : 'text-gray-700'
+                        }`}>{st.timeInRangePct.toFixed(1)}%</div>
+                        <div className="text-[10px] text-gray-400 mt-0.5">{st.inRangeTicks} / {st.totalPollTicks} ticks</div>
+                      </div>
+                    </div>
+                    <div className="flex justify-between items-start py-2.5 px-5 bg-black/[0.015]">
+                      <span className="text-xs font-medium text-gray-400">Avg rebalance</span>
+                      <div className="text-right">
+                        <div className="text-xs font-semibold font-mono text-gray-700">
+                          {st.avgRebalanceIntervalHours != null ? `${st.avgRebalanceIntervalHours.toFixed(0)}h` : '—'}
+                        </div>
+                        <div className="text-[10px] text-gray-400 mt-0.5">{st.totalRebalances} rebalances total</div>
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
-            </>
-          ) : (
-            <div className="flex items-center gap-2 text-gray-400 text-sm px-5 py-6">
-              <svg className="w-4 h-4 animate-spin shrink-0" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
-              </svg>
-              Loading…
             </div>
-          )}
-        </div>
 
-        {/* Active position + balance card */}
-        <div className="bg-white/60 backdrop-blur-sm border border-white/80 rounded-2xl px-4 py-3 mb-4">
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-2">
-              <div className="text-[13px] font-bold text-gray-900">{label0}/{label1} · {feeLabel(s.fee)}</div>
-              <div className="text-[10px] font-semibold uppercase tracking-[0.07em] text-gray-400">position</div>
-            </div>
-            {inRange !== null && (
-              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10.5px] font-semibold border ${
-                inRange ? 'accent-bg accent-text accent-border' : 'bg-red-50 text-red-700 border-red-200'
-              }`}>
-                <span className={`w-1.5 h-1.5 rounded-full ${inRange ? 'accent-dot' : 'bg-red-500'}`} />
-                {inRange ? 'In range' : 'Out of range'}
-              </span>
-            )}
+
           </div>
 
-          {rangeBar ? (
-            <>
-              <div className="h-2 rounded-full stripes relative overflow-hidden">
-                <div
-                  className={`absolute top-0 bottom-0 border-y-2 ${inRange ? 'accent-bg accent-border' : 'bg-red-50 border-red-200'}`}
-                  style={{ left: `${rangeBar.loPct}%`, right: `${100 - rangeBar.hiPct}%` }}
-                />
-                <div className="absolute top-0 bottom-0 w-[2px] bg-gray-900" style={{ left: `${rangeBar.curPct}%` }} />
+          {/* Right column: Position card */}
+          <div className="lg:col-span-3 flex flex-col">
+            <div className="bg-white/60 backdrop-blur-sm border border-white/80 rounded-2xl overflow-hidden flex-1">
+              {/* Header */}
+              <div className="px-5 pt-4 pb-3 border-b border-black/5 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="text-[10.5px] font-semibold uppercase tracking-[0.08em] text-gray-400">Position</div>
+                  {inRange !== null && (
+                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10.5px] font-semibold border ${
+                      inRange ? 'accent-bg accent-text accent-border' : 'bg-red-50 text-red-700 border-red-200'
+                    }`}>
+                      <span className={`w-1.5 h-1.5 rounded-full ${inRange ? 'accent-dot' : 'bg-red-500'}`} />
+                      {inRange ? 'In range' : 'Out of range'}
+                    </span>
+                  )}
+                </div>
+                {posValueUsd !== null && (
+                  <div className="text-[13px] font-bold font-mono text-gray-900">{formatUsd(posValueUsd)}</div>
+                )}
               </div>
-              <div className="grid grid-cols-3 mt-1.5 mb-3">
-                <div>
-                  <div className="text-[9px] font-semibold uppercase tracking-[0.07em] text-gray-400">Min</div>
-                  <div className="text-[11px] font-mono font-semibold text-gray-600">${formatPrice(rangeBar.lo)}</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-[9px] font-semibold uppercase tracking-[0.07em] text-gray-400">Current</div>
-                  <div className="text-[11px] font-mono font-bold text-gray-900">${formatPrice(rangeBar.cur)}</div>
-                </div>
-                <div className="text-right">
-                  <div className="text-[9px] font-semibold uppercase tracking-[0.07em] text-gray-400">Max</div>
-                  <div className="text-[11px] font-mono font-semibold text-gray-600">${formatPrice(rangeBar.hi)}</div>
-                </div>
-              </div>
-              {liveToken0 && liveToken1 && ethPrice > 0 && (
-                <div className="border-t border-black/5 pt-3">
-                  <TokenRatioBar
-                    token0Raw={liveToken0} token1Raw={liveToken1}
-                    dec0={dec0} dec1={dec1} label0={label0} label1={label1} ethPrice={ethPrice}
-                  />
+
+              {/* Price range bar */}
+              {rangeBar && (
+                <div className="px-4 py-3 border-b border-black/5">
+                  <div className="h-2 rounded-full stripes relative overflow-hidden">
+                    <div
+                      className={`absolute top-0 bottom-0 border-y-2 ${inRange ? 'accent-bg accent-border' : 'bg-red-50 border-red-200'}`}
+                      style={{ left: `${rangeBar.loPct}%`, right: `${100 - rangeBar.hiPct}%` }}
+                    />
+                    <div className="absolute top-0 bottom-0 w-[2px] bg-gray-900" style={{ left: `${rangeBar.curPct}%` }} />
+                  </div>
+                  <div className="grid grid-cols-3 mt-1.5">
+                    <div>
+                      <div className="text-[9px] font-semibold uppercase tracking-[0.07em] text-gray-400">Min</div>
+                      <div className="text-[11px] font-mono font-semibold text-gray-600">${formatPrice(rangeBar.lo)}</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-[9px] font-semibold uppercase tracking-[0.07em] text-gray-400">Current</div>
+                      <div className="text-[11px] font-mono font-bold text-gray-900">${formatPrice(rangeBar.cur)}</div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-[9px] font-semibold uppercase tracking-[0.07em] text-gray-400">Max</div>
+                      <div className="text-[11px] font-mono font-semibold text-gray-600">${formatPrice(rangeBar.hi)}</div>
+                    </div>
+                  </div>
                 </div>
               )}
-            </>
-          ) : (
-            <div className="flex items-center gap-2 text-gray-400 text-sm py-6">
-              <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
-              </svg>
-              Loading…
-            </div>
-          )}
-        </div>
 
-        {/* Config card */}
-        {(() => {
-          const days = daysRunning(s.createdAt)
-          return (
-            <div className="bg-white/60 backdrop-blur-sm border border-white/80 rounded-2xl mb-4 overflow-hidden">
-              <div className="px-5 pt-4 pb-3 border-b border-black/5">
-                <div className="text-[10.5px] font-semibold uppercase tracking-[0.08em] text-gray-400">Config</div>
-              </div>
-              <div className="px-5 py-4">
-                <div className="flex flex-wrap gap-2 mb-3">
+              {/* Token amounts + ratio */}
+              {(liveT0 !== null && liveT1 !== null) ? (
+                <>
+                  <div className="grid grid-cols-2 divide-x divide-black/5 border-b border-black/5">
+                    <div className="px-5 py-4">
+                      <div className="text-[10.5px] font-semibold text-gray-400 mb-1.5">{label0}</div>
+                      <div className="text-[18px] font-bold font-mono text-gray-900 leading-none">{liveT0.toFixed(6)}</div>
+                      {ethPrice > 0 && (
+                        <div className="text-[11px] font-mono text-gray-400 mt-1">
+                          {formatUsd(liveT0 * (label0.includes('WETH') ? ethPrice : 1))}
+                        </div>
+                      )}
+                    </div>
+                    <div className="px-5 py-4">
+                      <div className="text-[10.5px] font-semibold text-gray-400 mb-1.5">{label1}</div>
+                      <div className="text-[18px] font-bold font-mono text-gray-900 leading-none">{liveT1.toFixed(2)}</div>
+                      {ethPrice > 0 && (
+                        <div className="text-[11px] font-mono text-gray-400 mt-1">
+                          {formatUsd(liveT1 * (label1.includes('WETH') ? ethPrice : 1))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  {liveToken0 && liveToken1 && ethPrice > 0 && (
+                    <div className="px-5 py-3">
+                      <TokenRatioBar
+                        token0Raw={liveToken0} token1Raw={liveToken1}
+                        dec0={dec0} dec1={dec1} label0={label0} label1={label1} ethPrice={ethPrice}
+                      />
+                    </div>
+                  )}
+                </>
+              ) : !rangeBar ? (
+                <div className="flex items-center gap-2 text-gray-400 text-sm px-5 py-6">
+                  <svg className="w-4 h-4 animate-spin shrink-0" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                  </svg>
+                  Loading…
+                </div>
+              ) : null}
+
+              {/* Config footer */}
+              <div className="px-5 py-3 border-t border-black/5 bg-black/[0.015]">
+                <div className="flex flex-wrap gap-1.5 mb-2">
                   {[
                     `±${(s.rangePercent * 100).toFixed(0)}% range`,
                     `${(s.slippageTolerance * 100).toFixed(2)}% slip`,
                     `${s.pollIntervalSeconds}s poll`,
                     feeLabel(s.fee) + ' fee',
                   ].map(tag => (
-                    <span key={tag} className="inline-flex items-center px-2.5 py-1 rounded-lg bg-white/70 border border-white/90 text-xs font-semibold text-gray-600 shadow-sm">
+                    <span key={tag} className="inline-flex items-center px-2 py-0.5 rounded-md bg-white/80 border border-black/8 text-[10.5px] font-semibold text-gray-500">
                       {tag}
                     </span>
                   ))}
                 </div>
                 <div className="space-y-0.5">
                   <InfoRow label="Started" value={`${new Date(s.createdAt).toLocaleDateString()} (${days}d ago)`} />
-                  {s.initialToken0Amount && (
-                    <InfoRow label={`Deposit ${label0}`} value={<RawAmount amount={s.initialToken0Amount} decimals={dec0} label={label0} />} />
-                  )}
-                  {s.initialToken1Amount && (
-                    <InfoRow label={`Deposit ${label1}`} value={<RawAmount amount={s.initialToken1Amount} decimals={dec1} label={label1} />} />
-                  )}
                 </div>
               </div>
             </div>
-          )
-        })()}
+          </div>
+
+        </div>
 
         {/* Activity timeline */}
         <div className="bg-white/60 backdrop-blur-sm border border-white/80 rounded-2xl p-5">
@@ -1889,7 +1890,7 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
     <div>
       {/* Header */}
       {view === 'dashboard' ? (
-        <header className="mb-6 flex items-end justify-between">
+        <header className="mb-6 flex flex-wrap items-end justify-between gap-3">
           <div>
             <div className="text-[11px] font-semibold uppercase tracking-[0.1em] text-gray-400">lagrangefi</div>
             <h1 className="text-[26px] font-bold tracking-tight mt-1 text-gray-900">{pairLabel}</h1>

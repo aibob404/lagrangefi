@@ -63,7 +63,7 @@ fun Route.traderRoutes(
     // Production: replace with a persistent scheduler/supervisor approach.
     val instances = ConcurrentHashMap<Int, TraderService>()
 
-    route("/trader") {
+    route("/trader/spy-orb") {
 
         get("/status") {
             val userId = call.getUserId()

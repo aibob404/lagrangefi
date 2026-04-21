@@ -173,26 +173,26 @@ export async function fetchRebalances(): Promise<StrategyEvent[]> {
 // ── Trader ────────────────────────────────────────────────────────────────────
 
 export async function fetchTraderStatus(): Promise<TraderStatus> {
-  return apiFetch('/api/v1/trader/status')
+  return apiFetch('/api/v1/trader/spy-orb/status')
 }
 
 export async function saveTraderSettings(settings: TraderSettings): Promise<void> {
-  await apiFetch('/api/v1/trader/settings', {
+  await apiFetch('/api/v1/trader/spy-orb/settings', {
     method: 'PUT',
     body: JSON.stringify(settings),
   })
 }
 
 export async function startTrader(): Promise<void> {
-  await apiFetch('/api/v1/trader/start', { method: 'POST' })
+  await apiFetch('/api/v1/trader/spy-orb/start', { method: 'POST' })
 }
 
 export async function stopTrader(): Promise<void> {
-  await apiFetch('/api/v1/trader/stop', { method: 'POST' })
+  await apiFetch('/api/v1/trader/spy-orb/stop', { method: 'POST' })
 }
 
 export async function runBacktest(startDate: string, endDate: string): Promise<BacktestReport> {
-  return apiFetch('/api/v1/trader/backtest', {
+  return apiFetch('/api/v1/trader/spy-orb/backtest', {
     method: 'POST',
     body: JSON.stringify({ startDate, endDate }),
   })

@@ -104,7 +104,7 @@ Two GitHub Actions workflows:
 1. Run **Build and Push Images** on the branch — wait for it to succeed.
 2. Run **Deploy to Test** on the same branch.
 
-Test environment is at http://187.124.224.48/. There is no automatic deploy on PR push — both steps must be triggered manually for feature branches.
+Test environment is at http://$SERVER_IP/. There is no automatic deploy on PR push — both steps must be triggered manually for feature branches.
 
 ## Kubernetes
 

@@ -49,13 +49,15 @@ const MOCK_STRATEGIES = [
     rangePercent: 10,
     slippageTolerance: 0.5,
     pollIntervalSeconds: 60,
-    status: 'stopped',
+    status: 'active',
     createdAt: new Date(now - 14 * DAY).toISOString(),
-    stoppedAt: new Date(now - 1 * DAY).toISOString(),
+    stoppedAt: null,
     initialToken0Amount: '350000000000000000',  // 0.35 WETH
     initialToken1Amount: '500000000',            // 500 USDC
     initialValueUsd: 1480.50,                    // 0.35 * 2801.43 + 500
     openEthPriceUsd: 2801.43,
+    pendingToken0: '0',
+    pendingToken1: '0',
     openTxHashes: JSON.stringify([
       '0xopen1aaa111bbb222ccc333ddd444eee555fff666aaa111bbb222ccc333ddd444',
       '0xopen2bbb222ccc333ddd444eee555fff666aaa111bbb222ccc333ddd444eee555',

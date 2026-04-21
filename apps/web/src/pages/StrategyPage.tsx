@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, type FormEvent } from 'react'
+import React, { useState, useEffect, useRef, useCallback, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import {
   fetchStrategies, startStrategy, createStrategy,
@@ -880,6 +880,7 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
   const [lastUpdated,   setLastUpdated] = useState<Date | null>(null)
   const [refreshing,    setRefreshing]  = useState(false)
 
+  const [dashTab,       setDashTab]      = useState<'active' | 'closed'>('active')
   const [showCreate,    setShowCreate]   = useState(false)
   const [showAdvanced,  setShowAdvanced] = useState(false)
   const [createMode,    setCreateMode]   = useState<'mint' | 'register'>('mint')
@@ -1604,38 +1605,403 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
     )
   }
 
+  function renderDashboardView(s: Strategy) {
+    const pos      = positions[s.id]
+    const pool     = poolStates[s.id]
+    const st       = stats[s.id]
+    const dec0     = s.token0Decimals ?? 18
+    const dec1     = s.token1Decimals ?? 6
+    const label0   = tokenLabel(s.token0)
+    const label1   = tokenLabel(s.token1)
+    const ethPrice = pool ? parseFloat(pool.price) : 0
+    const inRange  = pool && pos ? pool.tick >= pos.tickLower && pool.tick < pos.tickUpper : null
+
+    const latestSuccess = (rebalances[s.id] ?? []).find(
+      r => r.action === 'REBALANCE' && r.status === 'success' && r.rebalanceDetails?.positionToken0End
+    )
+    const liveToken0 = pos?.amount0 ?? latestSuccess?.rebalanceDetails?.positionToken0End ?? null
+    const liveToken1 = pos?.amount1 ?? latestSuccess?.rebalanceDetails?.positionToken1End ?? null
+
+    const liveT0 = liveToken0 ? rawToFloat(liveToken0, dec0) : null
+    const liveT1 = liveToken1 ? rawToFloat(liveToken1, dec1) : null
+    const posValueUsd = (liveT0 !== null && liveT1 !== null && ethPrice > 0)
+      ? (label0.includes('WETH') ? liveT0 * ethPrice + liveT1 : liveT1 * ethPrice + liveT0)
+      : null
+
+    const unclaimed = pos ? computeUnclaimedFees(pos, ethPrice, dec0, dec1) : null
+
+    const rangeBar = (pool && pos) ? (() => {
+      const pad = (pos.tickUpper - pos.tickLower) * 0.2
+      const min = pos.tickLower - pad, max = pos.tickUpper + pad, total = max - min
+      const loPct = ((pos.tickLower - min) / total) * 100
+      const hiPct = ((pos.tickUpper - min) / total) * 100
+      const curPct = Math.min(Math.max(((pool.tick - min) / total) * 100, 0), 100)
+      return {
+        loPct, hiPct, curPct,
+        lo:  tickToPrice(pos.tickLower, pool.decimals0, pool.decimals1),
+        hi:  tickToPrice(pos.tickUpper, pool.decimals0, pool.decimals1),
+        cur: tickToPrice(pool.tick,     pool.decimals0, pool.decimals1),
+      }
+    })() : null
+
+    const totalFeesEarnedUsd = (st?.feesCollectedUsd ?? 0) + (unclaimed?.usd ?? 0)
+    const positionDelta = posValueUsd != null && s.initialValueUsd != null ? posValueUsd - s.initialValueUsd : null
+    const swapCostUsd = st?.swapCostUsd ?? 0
+    const netUsd = st != null ? (positionDelta ?? 0) + totalFeesEarnedUsd - st.gasCostUsd - swapCostUsd : null
+    const days = daysRunning(s.createdAt)
+    const apyPct = (netUsd != null && s.initialValueUsd && s.initialValueUsd > 0 && days > 0)
+      ? computeAPY(netUsd, s.initialValueUsd, days)
+      : null
+
+    return (
+      <React.Fragment key={s.id}>
+        {/* Top section: stacks on mobile/tablet, 2+3 cols on desktop */}
+        <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 mb-4 lg:items-stretch">
+
+          {/* Left column: P&L summary */}
+          <div className="lg:col-span-2 flex flex-col gap-4">
+
+            {/* Net P&L card */}
+            <div className="bg-white/60 backdrop-blur-sm border border-white/80 rounded-2xl flex-1">
+              <div className="px-5 pt-4 pb-3 border-b border-black/5 flex items-center justify-between">
+                <div className="text-[10.5px] font-semibold uppercase tracking-[0.08em] text-gray-400">Net P&L</div>
+                <div className="text-right">
+                  <div className="flex items-baseline gap-2">
+                    <div className={`text-[18px] font-bold font-mono ${
+                      netUsd == null ? 'text-gray-300' : netUsd >= 0 ? 'accent-text' : 'text-red-500'
+                    }`}>
+                      {netUsd == null ? '—' : (netUsd >= 0 ? '+' : '') + formatUsd(netUsd)}
+                    </div>
+                    {netUsd != null && s.initialValueUsd && s.initialValueUsd > 0 && (
+                      <div className={`text-[12px] font-semibold font-mono ${netUsd >= 0 ? 'accent-text' : 'text-red-400'}`}>
+                        {netUsd >= 0 ? '+' : ''}{((netUsd / s.initialValueUsd) * 100).toFixed(2)}%
+                      </div>
+                    )}
+                  </div>
+                  {apyPct != null && (
+                    <div className={`text-[10px] font-semibold mt-0.5 ${apyPct >= 0 ? 'accent-text' : 'text-red-400'}`}>
+                      {apyPct >= 0 ? '+' : ''}{apyPct.toFixed(1)}% APY
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="divide-y divide-black/5">
+                <div className="flex justify-between items-start py-2.5 px-5">
+                  <span className="text-xs font-medium text-gray-400">Invested</span>
+                  <div className="text-right">
+                    <div className="text-xs font-semibold text-gray-800 font-mono">
+                      {s.initialValueUsd ? formatUsd(s.initialValueUsd) : '—'}
+                    </div>
+                    {(s.initialToken0Amount || s.initialToken1Amount) && (
+                      <div className="text-[10px] text-gray-400 mt-0.5">
+                        {s.initialToken0Amount && <RawAmount amount={s.initialToken0Amount} decimals={dec0} label={label0} />}
+                        {s.initialToken0Amount && s.initialToken1Amount && ' + '}
+                        {s.initialToken1Amount && <RawAmount amount={s.initialToken1Amount} decimals={dec1} label={label1} />}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="flex justify-between items-start py-2.5 px-5">
+                  <span className="text-xs font-medium text-gray-400">Fees earned</span>
+                  <div className="text-right">
+                    <div className="text-xs font-semibold font-mono accent-text">
+                      {st ? `+${formatUsd(totalFeesEarnedUsd)}` : '—'}
+                    </div>
+                    {unclaimed && unclaimed.usd > 0 && st && (
+                      <div className="text-[10px] text-gray-400 mt-0.5">
+                        {formatUsd(st.feesCollectedUsd)} collected · {formatUsd(unclaimed.usd)} unclaimed
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="flex justify-between items-start py-2.5 px-5">
+                  <span className="text-xs font-medium text-gray-400">Gas spent</span>
+                  <div className="text-right">
+                    <div className="text-xs font-semibold font-mono text-red-400">
+                      {st ? `−${formatUsd(st.gasCostUsd)}` : '—'}
+                    </div>
+                    {st && (
+                      <div className="text-[10px] text-gray-400 mt-0.5">{st.totalRebalances} rebalances</div>
+                    )}
+                  </div>
+                </div>
+                <div className="flex justify-between items-start py-2.5 px-5">
+                  <span className="text-xs font-medium text-gray-400">Swap costs</span>
+                  <div className="text-right">
+                    <div className="text-xs font-semibold font-mono text-red-400">
+                      {st ? (st.swapCostUsd != null && st.swapCostUsd > 0 ? `−${formatUsd(st.swapCostUsd)}` : '—') : '—'}
+                    </div>
+                    <div className="text-[10px] text-gray-400 mt-0.5">slippage on swaps</div>
+                  </div>
+                </div>
+                {st && (
+                  <>
+                    <div className="flex justify-between items-start py-2.5 px-5 bg-black/[0.015]">
+                      <span className="text-xs font-medium text-gray-400">Time in range</span>
+                      <div className="text-right">
+                        <div className={`text-xs font-semibold font-mono ${
+                          st.timeInRangePct >= 70 ? 'accent-text' : st.timeInRangePct < 40 ? 'text-red-400' : 'text-gray-700'
+                        }`}>{st.timeInRangePct.toFixed(1)}%</div>
+                        <div className="text-[10px] text-gray-400 mt-0.5">{st.inRangeTicks} / {st.totalPollTicks} ticks</div>
+                      </div>
+                    </div>
+                    <div className="flex justify-between items-start py-2.5 px-5 bg-black/[0.015]">
+                      <span className="text-xs font-medium text-gray-400">Avg rebalance</span>
+                      <div className="text-right">
+                        <div className="text-xs font-semibold font-mono text-gray-700">
+                          {st.avgRebalanceIntervalHours != null ? `${st.avgRebalanceIntervalHours.toFixed(0)}h` : '—'}
+                        </div>
+                        <div className="text-[10px] text-gray-400 mt-0.5">{st.totalRebalances} rebalances total</div>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+
+
+          </div>
+
+          {/* Right column: Position card */}
+          <div className="lg:col-span-3 flex flex-col">
+            <div className="bg-white/60 backdrop-blur-sm border border-white/80 rounded-2xl overflow-hidden flex-1">
+
+              {/* Header: status + value + price row */}
+              <div className="px-4 pt-3 pb-2.5 border-b border-black/5">
+                {/* Top row: label, badge, position value */}
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <div className="text-[10.5px] font-semibold uppercase tracking-[0.08em] text-gray-400">Position</div>
+                    {inRange !== null && (
+                      <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold border ${
+                        inRange ? 'accent-bg accent-text accent-border' : 'bg-red-50 text-red-700 border-red-200'
+                      }`}>
+                        <span className={`w-1.5 h-1.5 rounded-full ${inRange ? 'accent-dot' : 'bg-red-500'}`} />
+                        {inRange ? 'In range' : 'Out of range'}
+                      </span>
+                    )}
+                  </div>
+                  {posValueUsd !== null && (
+                    <div className="text-[13px] font-bold font-mono text-gray-900">{formatUsd(posValueUsd)}</div>
+                  )}
+                </div>
+                {/* Entry → Current price */}
+                <div className="flex items-center gap-3">
+                  {s.openEthPriceUsd != null && (
+                    <div>
+                      <div className="text-[9px] font-semibold uppercase tracking-[0.07em] text-gray-400 leading-none mb-0.5">Entry</div>
+                      <div className="text-[13px] font-semibold font-mono text-gray-500">
+                        ${s.openEthPriceUsd.toLocaleString('en-US', { maximumFractionDigits: 2 })}
+                      </div>
+                    </div>
+                  )}
+                  {ethPrice > 0 && s.openEthPriceUsd != null && (
+                    <svg className="text-gray-300 shrink-0" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
+                    </svg>
+                  )}
+                  {ethPrice > 0 && (
+                    <div>
+                      <div className="text-[9px] font-semibold uppercase tracking-[0.07em] text-gray-400 leading-none mb-0.5">Now</div>
+                      <div className="flex items-baseline gap-1">
+                        <span className="text-[13px] font-semibold font-mono text-gray-900">
+                          ${ethPrice.toLocaleString('en-US', { maximumFractionDigits: 2 })}
+                        </span>
+                        {s.openEthPriceUsd != null && (() => {
+                          const pct = ((ethPrice - s.openEthPriceUsd) / s.openEthPriceUsd) * 100
+                          return (
+                            <span className={`text-[10px] font-semibold font-mono ${pct >= 0 ? 'accent-text' : 'text-red-400'}`}>
+                              {pct >= 0 ? '+' : ''}{pct.toFixed(1)}%
+                            </span>
+                          )
+                        })()}
+                      </div>
+                    </div>
+                  )}
+                  <div className="ml-auto text-[10px] text-gray-400">{label0}/{label1}{pos ? ` · ${feeLabel(pos.fee)}` : ''}</div>
+                </div>
+              </div>
+
+              {/* Price range bar */}
+              {rangeBar && (
+                <div className="px-4 py-2 border-b border-black/5">
+                  <div className="h-1.5 rounded-full stripes relative overflow-hidden">
+                    <div
+                      className={`absolute top-0 bottom-0 border-y-2 ${inRange ? 'accent-bg accent-border' : 'bg-red-50 border-red-200'}`}
+                      style={{ left: `${rangeBar.loPct}%`, right: `${100 - rangeBar.hiPct}%` }}
+                    />
+                    <div className="absolute top-0 bottom-0 w-[2px] bg-gray-900" style={{ left: `${rangeBar.curPct}%` }} />
+                  </div>
+                  <div className="flex justify-between mt-1">
+                    <span className="text-[10px] font-mono text-gray-400">${formatPrice(rangeBar.lo)}</span>
+                    <span className="text-[10px] font-mono font-semibold text-gray-700">${formatPrice(rangeBar.cur)}</span>
+                    <span className="text-[10px] font-mono text-gray-400">${formatPrice(rangeBar.hi)}</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Token amounts */}
+              {(liveT0 !== null && liveT1 !== null) ? (
+                <>
+                  <div className="grid grid-cols-2 divide-x divide-black/5 border-b border-black/5">
+                    <div className="px-4 py-2.5">
+                      <div className="text-[10px] font-semibold text-gray-400 mb-1">{label0}</div>
+                      <div className="text-[15px] font-bold font-mono text-gray-900 leading-none">{liveT0.toFixed(6)}</div>
+                      {ethPrice > 0 && (
+                        <div className="text-[10px] font-mono text-gray-400 mt-0.5">
+                          {formatUsd(liveT0 * (label0.includes('WETH') ? ethPrice : 1))}
+                        </div>
+                      )}
+                    </div>
+                    <div className="px-4 py-2.5">
+                      <div className="text-[10px] font-semibold text-gray-400 mb-1">{label1}</div>
+                      <div className="text-[15px] font-bold font-mono text-gray-900 leading-none">{liveT1.toFixed(2)}</div>
+                      {ethPrice > 0 && (
+                        <div className="text-[10px] font-mono text-gray-400 mt-0.5">
+                          {formatUsd(liveT1 * (label1.includes('WETH') ? ethPrice : 1))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  {liveToken0 && liveToken1 && ethPrice > 0 && (
+                    <div className="px-4 py-2 border-b border-black/5">
+                      <TokenRatioBar
+                        token0Raw={liveToken0} token1Raw={liveToken1}
+                        dec0={dec0} dec1={dec1} label0={label0} label1={label1} ethPrice={ethPrice}
+                      />
+                    </div>
+                  )}
+                </>
+              ) : !rangeBar ? (
+                <div className="flex items-center gap-2 text-gray-400 text-sm px-4 py-4">
+                  <svg className="w-4 h-4 animate-spin shrink-0" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                  </svg>
+                  Loading…
+                </div>
+              ) : null}
+
+              {/* Config footer */}
+              <div className="px-4 py-2.5 border-t border-black/5 bg-black/[0.015] flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
+                {[
+                  `±${(s.rangePercent * 100).toFixed(0)}% range`,
+                  `${(s.slippageTolerance * 100).toFixed(2)}% slip`,
+                  `${s.pollIntervalSeconds}s poll`,
+                  feeLabel(s.fee) + ' fee',
+                ].map(tag => (
+                  <span key={tag} className="inline-flex items-center px-2 py-0.5 rounded-md bg-white/80 border border-black/8 text-[10.5px] font-semibold text-gray-500">
+                    {tag}
+                  </span>
+                ))}
+                <span className="ml-auto text-[10.5px] text-gray-400">
+                  {(() => {
+                    const ms = Date.now() - new Date(s.createdAt).getTime()
+                    const h = Math.floor(ms / 3_600_000)
+                    const d = Math.floor(h / 24)
+                    const rem = h % 24
+                    const m = Math.floor((ms % 3_600_000) / 60_000)
+                    const dur = d > 0 ? `${d}d ${rem}h ${m}m` : h > 0 ? `${h}h ${m}m` : `${m}m`
+                    return `Started ${new Date(s.createdAt).toLocaleDateString()} ${new Date(s.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · ${dur}`
+                  })()}
+                </span>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        {/* Activity timeline */}
+        <div className="bg-white/60 backdrop-blur-sm border border-white/80 rounded-2xl p-5">
+          <div className="text-[10.5px] font-semibold uppercase tracking-[0.08em] text-gray-400 mb-3">Activity</div>
+          <ActivityTimeline
+            strategy={s} stats={st}
+            events={[...(rebalances[s.id] ?? [])]}
+            dec0={dec0} dec1={dec1} label0={label0} label1={label1}
+          />
+        </div>
+      </React.Fragment>
+    )
+  }
+
+  const activeStrategy = activeStrategies[0]
+  const pairLabel = activeStrategy
+    ? `${tokenLabel(activeStrategy.token0)}/${tokenLabel(activeStrategy.token1)} · ${feeLabel(activeStrategy.fee)}`
+    : 'Uniswap auto-rebalance'
+
   return (
     <div>
       {/* Header */}
-      <div className="flex flex-wrap items-start justify-between gap-y-3 mb-7">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">{view === 'closed' ? 'Closed Strategies' : 'Dashboard'}</h1>
-          <p className="text-sm text-gray-500 mt-0.5">{view === 'closed' ? 'Historical records' : 'Uniswap v3 · Arbitrum'}</p>
+      {view === 'dashboard' ? (
+        <header className="mb-6 flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <div className="text-[11px] font-semibold uppercase tracking-[0.1em] text-gray-400">lagrangefi</div>
+            <h1 className="text-[26px] font-bold tracking-tight mt-1 text-gray-900">{pairLabel}</h1>
+          </div>
+          <div className="flex items-center gap-3">
+            {refreshing && (
+              <span className="text-[11px] font-mono text-gray-400 flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+                Refreshing
+              </span>
+            )}
+            {lastUpdated && !refreshing && (
+              <span className="text-[11px] font-mono text-gray-400">{lastUpdated.toLocaleTimeString()}</span>
+            )}
+            <div className="text-[11px] font-mono text-gray-500 flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full accent-dot" />
+              Live · Arbitrum
+            </div>
+            {hasActive && activeStrategy ? (
+              confirmStopId !== activeStrategy.id ? (
+                <button onClick={() => setConfirmStopId(activeStrategy.id)}
+                  className="inline-flex items-center gap-2 text-[12px] font-semibold text-red-500 border border-red-200 hover:bg-red-50 px-3.5 py-1.5 rounded-xl transition-colors">
+                  <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+                  Stop strategy
+                </button>
+              ) : (
+                <div className="flex items-center gap-2 bg-white/80 border border-red-100 rounded-xl px-3 py-1.5 shadow-sm">
+                  <span className="text-[11px] text-gray-500">{stoppingId === activeStrategy.id ? 'Stopping…' : 'Stop permanently?'}</span>
+                  <button onClick={() => handleStop(activeStrategy.id)} disabled={stoppingId === activeStrategy.id}
+                    className="text-[11px] font-bold text-white bg-red-500 hover:bg-red-600 px-2.5 py-1 rounded-lg disabled:opacity-50 transition-colors">
+                    {stoppingId === activeStrategy.id ? '…' : 'Confirm'}
+                  </button>
+                  {stoppingId !== activeStrategy.id && (
+                    <button onClick={() => setConfirmStopId(null)} className="text-[11px] text-gray-400 hover:text-gray-600 transition-colors">Cancel</button>
+                  )}
+                </div>
+              )
+            ) : (
+              <button
+                onClick={openCreate}
+                className="inline-flex items-center gap-2 bg-gray-900 hover:bg-gray-800 text-white text-[12px] font-semibold px-3.5 py-1.5 rounded-xl shadow-sm hover:shadow transition-all"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                </svg>
+                New strategy
+              </button>
+            )}
+          </div>
+        </header>
+      ) : (
+        <div className="flex flex-wrap items-start justify-between gap-y-3 mb-7">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Closed Strategies</h1>
+            <p className="text-sm text-gray-500 mt-0.5">Historical records</p>
+          </div>
+          <div className="flex items-center gap-3 mt-1">
+            {refreshing ? (
+              <span className="flex items-center gap-1.5 text-xs text-gray-400">
+                <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+                Refreshing
+              </span>
+            ) : lastUpdated ? (
+              <span className="text-xs text-gray-400">Updated {lastUpdated.toLocaleTimeString()}</span>
+            ) : null}
+          </div>
         </div>
-        <div className="flex items-center gap-3 mt-1">
-          {refreshing ? (
-            <span className="flex items-center gap-1.5 text-xs text-gray-400">
-              <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
-              Refreshing
-            </span>
-          ) : lastUpdated ? (
-            <span className="text-xs text-gray-400">Updated {lastUpdated.toLocaleTimeString()}</span>
-          ) : null}
-          {view === 'dashboard' && (
-            <button
-              onClick={openCreate}
-              disabled={hasActive}
-              title={hasActive ? 'Stop your active strategy before creating a new one' : undefined}
-              className="inline-flex items-center gap-2 bg-gray-900 hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold px-4 py-2 rounded-xl shadow-sm hover:shadow transition-all"
-            >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-              </svg>
-              New strategy
-            </button>
-          )}
-        </div>
-      </div>
+      )}
 
       {error && (
         <div className="mb-5 flex items-center justify-between bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl px-4 py-3">
@@ -1876,13 +2242,54 @@ export default function StrategyPage({ view = 'dashboard' }: { view?: 'dashboard
       {view === 'dashboard' ? (
         strategies.length === 0 ? (
           <OnboardingState hasWallet={user?.hasWallet ?? false} />
-        ) : activeStrategies.length > 0 ? (
-          activeStrategies.map(renderStrategyCard)
         ) : (
-          <div className="bg-white/40 backdrop-blur-xl rounded-2xl border border-dashed border-gray-200 px-6 py-10 text-center">
-            <p className="text-sm font-medium text-gray-400">No active strategy</p>
-            <p className="text-xs text-gray-400 mt-1">Use the "New strategy" button above to get started.</p>
-          </div>
+          <>
+            {/* Tab switcher */}
+            <div className="inline-flex bg-white/60 backdrop-blur-sm border border-white/80 rounded-xl p-1 mb-4 gap-1">
+              {([
+                { id: 'active', label: 'Active',             count: activeStrategies.length },
+                { id: 'closed', label: 'Closed strategies',  count: closedStrategies.length },
+              ] as const).map(t => {
+                const on = dashTab === t.id
+                return (
+                  <button key={t.id} onClick={() => setDashTab(t.id)}
+                    className={`flex items-center gap-2 text-[12.5px] font-semibold px-3 py-1.5 rounded-lg transition-colors ${
+                      on ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-900'
+                    }`}>
+                    {t.label}
+                    <span className={`mono text-[10.5px] rounded-md px-1.5 py-0.5 ${
+                      on ? 'accent-bg accent-text' : 'bg-black/5 text-gray-500'
+                    }`}>
+                      {t.count}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+
+            {/* Tab content */}
+            {dashTab === 'active' ? (
+              activeStrategies.length > 0 ? (
+                activeStrategies.map(renderDashboardView)
+              ) : (
+                <div className="bg-white/40 backdrop-blur-xl rounded-2xl border border-dashed border-gray-200 px-6 py-10 text-center">
+                  <p className="text-sm font-medium text-gray-400">No active strategy</p>
+                  <p className="text-xs text-gray-400 mt-1">Use the "New strategy" button above to get started.</p>
+                </div>
+              )
+            ) : (
+              closedStrategies.length > 0 ? (
+                <div className="space-y-3">
+                  {closedStrategies.map(renderStrategyCard)}
+                </div>
+              ) : (
+                <div className="bg-white/40 backdrop-blur-xl rounded-2xl border border-dashed border-gray-200 px-6 py-10 text-center">
+                  <p className="text-sm font-medium text-gray-400">No closed strategies yet</p>
+                  <p className="text-xs text-gray-400 mt-1">Strategies you stop will appear here.</p>
+                </div>
+              )
+            )}
+          </>
         )
       ) : (
         closedStrategies.length > 0 ? (

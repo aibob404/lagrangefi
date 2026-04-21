@@ -4,6 +4,7 @@ import tailwindcss from 'tailwindcss'
 import { mockApiPlugin } from './mock-api'
 
 const useMock = process.env.MOCK === 'true'
+const apiHost = process.env.API_HOST ?? 'http://localhost:3000'
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -21,9 +22,9 @@ export default defineConfig({
     allowedHosts: true,
     ...(useMock ? {} : {
       proxy: {
-        '/api': 'http://187.124.224.48',
-        '/auth': 'http://187.124.224.48',
-        '/me': 'http://187.124.224.48',
+        '/api': apiHost,
+        '/auth': apiHost,
+        '/me': apiHost,
       },
     }),
   },

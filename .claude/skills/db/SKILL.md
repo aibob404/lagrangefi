@@ -10,7 +10,7 @@ allowed-tools: Bash(ssh *)
 Run SQL against the lagrangefi test database.
 
 ## Connection path
-SSH → root@187.124.224.48 → kubectl exec into postgres-0 pod (test namespace) → psql
+SSH → root@$SERVER_IP → kubectl exec into postgres-0 pod (test namespace) → psql
 
 Credentials are available as environment variables: $DB_USER, $DB_PASSWORD, $DB_NAME.
 
@@ -25,7 +25,7 @@ The user's query or request is: $ARGUMENTS
 
 2. Run it via this SSH command pattern:
 ```bash
-ssh root@187.124.224.48 "kubectl -n test exec postgres-0 -- env PGPASSWORD='$DB_PASSWORD' psql -U '$DB_USER' -d '$DB_NAME' -c \"<SQL HERE>\""
+ssh root@$SERVER_IP "kubectl -n test exec postgres-0 -- env PGPASSWORD='$DB_PASSWORD' psql -U '$DB_USER' -d '$DB_NAME' -c \"<SQL HERE>\""
 ```
 
 3. Return the full output and explain the results clearly.

@@ -6,6 +6,7 @@ import LoginPage from './pages/LoginPage'
 import RegisterPage from './pages/RegisterPage'
 import StrategyPage from './pages/StrategyPage'
 import ProfilePage from './pages/ProfilePage'
+import TraderPage from './pages/TraderPage'
 
 export default function App() {
   return (
@@ -25,6 +26,9 @@ export default function App() {
           } />
           <Route path="/profile" element={
             <ProtectedRoute><Layout><ProfilePage /></Layout></ProtectedRoute>
+          } />
+          <Route path="/trader" element={
+            <ProtectedRoute><Layout><TraderPage /></Layout></ProtectedRoute>
           } />
 
           {/* Redirects */}

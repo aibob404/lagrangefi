@@ -15,6 +15,8 @@ import fi.lagrange.services.TelegramNotifier
 import fi.lagrange.services.UserService
 import fi.lagrange.services.WalletService
 import fi.lagrange.strategy.StrategyScheduler
+import fi.lagrange.trader.db.SecretEncryptor
+import fi.lagrange.trader.db.TraderSettingsRepository
 import io.ktor.server.application.*
 import io.ktor.server.engine.*
 import io.ktor.server.netty.*
@@ -39,10 +41,17 @@ fun main() {
     // Start schedulers for any strategies that were active before restart
     scheduler.loadAndStartAll()
 
+    // Trader — per-user keys stored encrypted in DB; encryptor reuses the same wallet key
+    val traderSettingsRepo = TraderSettingsRepository()
+    val traderEncryptor    = SecretEncryptor(config.wallet.encryptionKey)
+
     embeddedServer(Netty, port = config.port, host = config.host) {
         JwtConfig.configureKtor(this)
         configureSerialization()
         configureStatusPages()
-        configureRouting(chainClient, userService, walletService, strategyService, scheduler, telegramNotifier)
+        configureRouting(
+            chainClient, userService, walletService, strategyService, scheduler, telegramNotifier,
+            traderSettingsRepo, traderEncryptor
+        )
     }.start(wait = true)
 }

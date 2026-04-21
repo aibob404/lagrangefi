@@ -149,3 +149,36 @@ object StrategySnapshots : Table("strategy_snapshots") {
     val snapshotAt = timestamp("snapshot_at")
     override val primaryKey = PrimaryKey(id)
 }
+
+/** Per-user Alpaca + FRED credentials for the SPY trader. Keys are AES-256-GCM encrypted at rest. */
+object TraderSettings : Table("trader_settings") {
+    val userId            = integer("user_id").references(Users.id).uniqueIndex()
+    val encryptedApiKey   = text("encrypted_api_key")
+    val encryptedApiSecret = text("encrypted_api_secret")
+    val fredApiKey        = varchar("fred_api_key", 64).default("")  // not sensitive — free key
+    val paper             = bool("paper").default(true)
+    val startingEquity    = double("starting_equity").default(100_000.0)
+    val riskPct           = double("risk_pct").default(0.005)
+    val updatedAt         = timestamp("updated_at")
+    override val primaryKey = PrimaryKey(userId)
+}
+
+/** Completed SPY trades persisted for analytics and audit. */
+object TraderTrades : Table("trader_trades") {
+    val id             = integer("id").autoIncrement()
+    val userId         = integer("user_id").references(Users.id).index()
+    val entryAt        = timestamp("entry_at")
+    val exitAt         = timestamp("exit_at").nullable()
+    val entryPrice     = double("entry_price")
+    val exitPrice      = double("exit_price").nullable()
+    val shares         = integer("shares")
+    val pnl            = double("pnl").nullable()
+    val pnlPct         = double("pnl_pct").nullable()
+    val holdMinutes    = long("hold_minutes").nullable()
+    val qualityScore   = integer("quality_score")
+    val macroScore     = integer("macro_score")
+    val exitReason     = varchar("exit_reason", 32).nullable()
+    val reason         = text("reason")
+    val createdAt      = timestamp("created_at")
+    override val primaryKey = PrimaryKey(id)
+}

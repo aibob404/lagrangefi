@@ -128,6 +128,41 @@ export interface User {
   hasWallet: boolean
 }
 
+// ── Trader types ──────────────────────────────────────────────────────────────
+
+export interface TraderStatus {
+  running: boolean
+  accountEquity: number
+  dailyPnl: number
+  hasOpenPosition: boolean
+  macroRegime: string
+  vixRegime: string
+  lastSignalReason: string
+}
+
+export interface TraderSettings {
+  alpacaApiKey: string
+  alpacaApiSecret: string
+  fredApiKey: string
+  paper: boolean
+  startingEquity: number
+  riskPct: number
+}
+
+export interface BacktestReport {
+  totalTrades: number
+  winRate: number
+  profitFactor: number
+  sharpe: number
+  sortino: number
+  maxDrawdownPct: number
+  netReturnPct: number
+  annualisedReturnPct: number
+  avgHoldMinutes: number
+  tradesPerWeek: number
+  summary: string
+}
+
 export interface CreateStrategyRequest {
   name: string
   tokenId: string

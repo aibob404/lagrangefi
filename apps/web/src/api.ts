@@ -1,6 +1,7 @@
 import type {
   Position, PoolState, Strategy, StrategyStats,
   StrategyEvent, User, CreateStrategyRequest,
+  TraderStatus, TraderSettings, BacktestReport,
 } from './types'
 import {
   MOCK_MODE, MOCK_TOKEN, MOCK_USER, MOCK_STRATEGIES, MOCK_STATS,
@@ -167,4 +168,32 @@ export async function fetchPoolState(): Promise<PoolState> {
 export async function fetchRebalances(): Promise<StrategyEvent[]> {
   if (MOCK_MODE) return MOCK_REBALANCES[1] ?? []
   return apiFetch('/api/v1/rebalances')
+}
+
+// ── Trader ────────────────────────────────────────────────────────────────────
+
+export async function fetchTraderStatus(): Promise<TraderStatus> {
+  return apiFetch('/api/v1/trader/status')
+}
+
+export async function saveTraderSettings(settings: TraderSettings): Promise<void> {
+  await apiFetch('/api/v1/trader/settings', {
+    method: 'PUT',
+    body: JSON.stringify(settings),
+  })
+}
+
+export async function startTrader(): Promise<void> {
+  await apiFetch('/api/v1/trader/start', { method: 'POST' })
+}
+
+export async function stopTrader(): Promise<void> {
+  await apiFetch('/api/v1/trader/stop', { method: 'POST' })
+}
+
+export async function runBacktest(startDate: string, endDate: string): Promise<BacktestReport> {
+  return apiFetch('/api/v1/trader/backtest', {
+    method: 'POST',
+    body: JSON.stringify({ startDate, endDate }),
+  })
 }

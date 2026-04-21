@@ -65,6 +65,10 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.1")
     implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.0")
 
+    // Trader-SP500: WebSocket streaming + statistics
+    implementation("io.ktor:ktor-client-websockets-jvm:$ktorVersion")
+    implementation("org.apache.commons:commons-math3:3.6.1")
+
     // Test
     testImplementation(kotlin("test"))
     testImplementation("io.ktor:ktor-server-test-host-jvm:$ktorVersion")

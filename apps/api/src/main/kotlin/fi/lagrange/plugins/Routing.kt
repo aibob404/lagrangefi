@@ -10,6 +10,9 @@ import fi.lagrange.services.UserService
 import fi.lagrange.services.WalletService
 import fi.lagrange.strategy.StrategyScheduler
 import fi.lagrange.strategy.calcTickRange
+import fi.lagrange.trader.db.SecretEncryptor
+import fi.lagrange.trader.db.TraderSettingsRepository
+import fi.lagrange.trader.traderRoutes
 import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.auth.*
@@ -59,6 +62,8 @@ fun Application.configureRouting(
     strategyService: StrategyService,
     scheduler: StrategyScheduler,
     telegram: TelegramNotifier,
+    traderSettingsRepo: TraderSettingsRepository? = null,
+    traderEncryptor: SecretEncryptor? = null,
 ) {
     routing {
         get("/health") {
@@ -70,6 +75,11 @@ fun Application.configureRouting(
 
         authenticate("jwt") {
             route("/api/v1") {
+
+                // Trader routes — mounted only when trader is enabled via config
+                if (traderSettingsRepo != null && traderEncryptor != null) {
+                    traderRoutes(traderSettingsRepo, traderEncryptor)
+                }
 
                 // --- Position / Pool (for active strategy of current user) ---
 

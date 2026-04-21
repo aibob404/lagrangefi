@@ -38,6 +38,6 @@ data class JwtSettings(
 )
 
 data class WalletSettings(
-    /** Base64-encoded 32-byte AES-256 key for encrypting wallet phrases at rest */
+    /** Base64-encoded 32-byte AES-256 key for encrypting wallet phrases and trader API keys at rest */
     val encryptionKey: String,
 )

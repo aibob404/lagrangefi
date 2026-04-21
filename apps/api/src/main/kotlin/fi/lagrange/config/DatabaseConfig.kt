@@ -8,6 +8,8 @@ import fi.lagrange.model.Strategies
 import fi.lagrange.model.StrategyEvents
 import fi.lagrange.model.StrategySnapshots
 import fi.lagrange.model.StrategyStats
+import fi.lagrange.model.TraderSettings
+import fi.lagrange.model.TraderTrades
 import fi.lagrange.model.Users
 import fi.lagrange.model.Wallets
 import org.jetbrains.exposed.sql.Database
@@ -36,6 +38,8 @@ object DatabaseConfig {
                 RebalanceDetails,
                 ChainTransactions,
                 StrategySnapshots,
+                TraderSettings,
+                TraderTrades,
             )
 
             // Index: strategies.user_id — SchemaUtils won't add indexes to existing tables

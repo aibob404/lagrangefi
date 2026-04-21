@@ -5,22 +5,22 @@ import fi.lagrange.trader.data.model.MacroSnapshot
 
 /**
  * Assembles daily [MacroSnapshot] rows — no API key required.
- *  - Stooq free CSV: ^tnx (10Y yield), ^irx (13W T-bill / FFR proxy), ^vix, ^vxv, ^vvix
- *  - Alpaca or Stooq ETF prices: HYG, LQD
+ *  - Yahoo Finance: ^VIX, ^VXV (VIX3M), ^VVIX, ^TNX (10Y yield), ^IRX (13W T-bill / FFR proxy)
+ *  - Alpaca or Yahoo Finance ETF prices: HYG, LQD
  *
  * Gaps (holidays) are forward-filled from the most recent known value.
  */
 class MacroDataService(
-    private val stooq: StooqClient,
+    private val yahoo: YahooFinanceClient,
     private val alpaca: AlpacaHistoricalClient
 ) {
 
-    suspend fun buildHistory(startDate: String = "2014-01-01", endDate: String): List<MacroSnapshot> {
-        val tnx   = stooq.fetchDailyBars("^tnx").associateBy { it.date }   // 10Y Treasury yield
-        val irx   = stooq.fetchDailyBars("^irx").associateBy { it.date }   // 13W T-bill (FFR proxy)
-        val vix   = stooq.fetchDailyBars("^vix").associateBy { it.date }
-        val vix3m = stooq.fetchDailyBars("^vxv").associateBy { it.date }
-        val vvix  = stooq.fetchDailyBars("^vvix").associateBy { it.date }
+    suspend fun buildHistory(startDate: String = "2010-01-01", endDate: String): List<MacroSnapshot> {
+        val tnx   = yahoo.fetchDailyBars("^TNX", startDate).associateBy { it.date }  // 10Y yield %
+        val irx   = yahoo.fetchDailyBars("^IRX", startDate).associateBy { it.date }  // 13W T-bill %
+        val vix   = yahoo.fetchDailyBars("^VIX", startDate).associateBy { it.date }
+        val vix3m = yahoo.fetchDailyBars("^VXV", startDate).associateBy { it.date }
+        val vvix  = yahoo.fetchDailyBars("^VVIX", startDate).associateBy { it.date }
         val hyg   = fetchEtf("HYG", startDate, endDate).associateBy { it.date }
         val lqd   = fetchEtf("LQD", startDate, endDate).associateBy { it.date }
 
@@ -57,6 +57,6 @@ class MacroDataService(
 
     private suspend fun fetchEtf(symbol: String, start: String, end: String): List<DailyBar> =
         runCatching { alpaca.fetchDailyBars(symbol, start, end) }.getOrElse {
-            runCatching { stooq.fetchDailyBars(symbol.lowercase()) }.getOrDefault(emptyList())
+            runCatching { yahoo.fetchDailyBars(symbol, start) }.getOrDefault(emptyList())
         }
 }

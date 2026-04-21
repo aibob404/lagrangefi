@@ -7,7 +7,7 @@ import fi.lagrange.trader.backtest.ReportGenerator
 import fi.lagrange.trader.data.AlpacaHistoricalClient
 import fi.lagrange.trader.data.AlpacaStreamClient
 import fi.lagrange.trader.data.MacroDataService
-import fi.lagrange.trader.data.StooqClient
+import fi.lagrange.trader.data.YahooFinanceClient
 import fi.lagrange.trader.data.model.Bar
 import fi.lagrange.trader.data.model.MacroSnapshot
 import fi.lagrange.trader.execution.AlpacaOrderClient
@@ -71,8 +71,8 @@ class TraderService(
     private val alpacaHistorical = AlpacaHistoricalClient(httpClient, alpacaKey, alpacaSecret)
     private val alpacaStream     = AlpacaStreamClient(httpClient, alpacaKey, alpacaSecret)
     private val alpacaOrders     = AlpacaOrderClient(httpClient, alpacaKey, alpacaSecret, paper)
-    private val stooqClient      = StooqClient(httpClient)
-    private val macroDataService = MacroDataService(stooqClient, alpacaHistorical)
+    private val yahooClient      = YahooFinanceClient(httpClient)
+    private val macroDataService = MacroDataService(yahooClient, alpacaHistorical)
     private val orchestrator     = SignalOrchestrator()
     private val tradeManager     = TradeManager(alpacaOrders)
     private val volEngine        = VolatilityRegimeEngine()

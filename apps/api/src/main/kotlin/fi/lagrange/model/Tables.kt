@@ -1,7 +1,7 @@
 package fi.lagrange.model
 
 import org.jetbrains.exposed.sql.Table
-import org.jetbrains.exposed.sql.kotlin.datetime.timestamp
+import timestamp
 
 object Users : Table("users") {
     val id = integer("id").autoIncrement()
@@ -156,7 +156,7 @@ object BacktestRuns : Table("backtest_runs") {
     val userId              = integer("user_id").references(Users.id).index()
     val startDate           = varchar("start_date", 10)
     val endDate             = varchar("end_date", 10)
-    val ranAt               = org.jetbrains.exposed.sql.kotlin.datetime.timestamp("ran_at")
+    val ranAt               = timestamp("ran_at")
     val startingEquity      = double("starting_equity")
     val riskPct             = double("risk_pct")
     val totalTrades         = integer("total_trades")
@@ -183,8 +183,8 @@ object BacktestTrades : Table("backtest_trades") {
     val id            = integer("id").autoIncrement()
     val backtestRunId = integer("backtest_run_id").references(BacktestRuns.id).index()
     val userId        = integer("user_id").references(Users.id).index()
-    val entryAt       = org.jetbrains.exposed.sql.kotlin.datetime.timestamp("entry_at")
-    val exitAt        = org.jetbrains.exposed.sql.kotlin.datetime.timestamp("exit_at").nullable()
+    val entryAt       = timestamp("entry_at")
+    val exitAt        = timestamp("exit_at").nullable()
     val entryPrice    = double("entry_price")
     val exitPrice     = double("exit_price").nullable()
     val shares        = integer("shares")

@@ -5,10 +5,7 @@ import fi.lagrange.model.BacktestTrades
 import fi.lagrange.trader.backtest.BacktestReport
 import fi.lagrange.trader.data.model.CompletedTrade
 import kotlinx.datetime.Clock
-import org.jetbrains.exposed.sql.ResultRow
-import org.jetbrains.exposed.sql.SortOrder
-import org.jetbrains.exposed.sql.insert
-import org.jetbrains.exposed.sql.selectAll
+import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.transactions.transaction
 
 class BacktestRepository {

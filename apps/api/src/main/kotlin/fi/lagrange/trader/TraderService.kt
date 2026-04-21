@@ -36,6 +36,7 @@ import kotlinx.datetime.LocalTime
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 import kotlinx.serialization.json.Json
+import org.slf4j.LoggerFactory
 
 @kotlinx.serialization.Serializable
 data class TraderStatus(
@@ -59,6 +60,7 @@ class TraderService(
     private val startingEquity: Double = 100_000.0,
     private val riskPct: Double = 0.005
 ) {
+    private val log   = LoggerFactory.getLogger(TraderService::class.java)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private val httpClient = HttpClient(CIO) {
@@ -121,11 +123,16 @@ class TraderService(
     suspend fun runBacktest(startDate: LocalDate, endDate: LocalDate): BacktestReport {
         val start = startDate.toString()
         val end   = endDate.toString()
+        log.info("Backtest starting: $start → $end")
         val intradayBars = alpacaHistorical.fetchBars("SPY", "5Min", start, end)
-        val daily        = alpacaHistorical.fetchDailyBars("SPY", "2010-01-01", end)
-        val macro        = macroDataService.buildHistory("2010-01-01", end)
-        val config       = BacktestConfig(startDate, endDate, startingEquity, riskPct)
-        val result       = BacktestEngine(orchestrator).run(daily, intradayBars, macro, config)
+        log.info("Backtest: fetched ${intradayBars.size} intraday bars")
+        val daily = alpacaHistorical.fetchDailyBars("SPY", "2010-01-01", end)
+        log.info("Backtest: fetched ${daily.size} daily bars")
+        val macro = macroDataService.buildHistory("2010-01-01", end)
+        log.info("Backtest: built ${macro.size} macro snapshots")
+        val config = BacktestConfig(startDate, endDate, startingEquity, riskPct)
+        val result = BacktestEngine(orchestrator).run(daily, intradayBars, macro, config)
+        log.info("Backtest done: ${result.trades.size} trades, finalEquity=${result.finalEquity}")
         return ReportGenerator.generate(result)
     }
 

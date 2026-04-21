@@ -172,6 +172,10 @@ export async function fetchRebalances(): Promise<StrategyEvent[]> {
 
 // ── Trader ────────────────────────────────────────────────────────────────────
 
+export async function fetchTraderSettingsInfo(): Promise<{ paper: boolean; startingEquity: number; riskPct: number; alpacaKeySet: boolean } | null> {
+  return apiFetch<{ paper: boolean; startingEquity: number; riskPct: number; alpacaKeySet: boolean }>('/api/v1/trader/spy-orb/settings').catch(() => null)
+}
+
 export async function fetchTraderStatus(): Promise<TraderStatus> {
   return apiFetch('/api/v1/trader/spy-orb/status')
 }

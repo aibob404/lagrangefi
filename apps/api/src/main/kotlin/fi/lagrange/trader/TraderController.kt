@@ -14,9 +14,17 @@ import kotlinx.serialization.Serializable
 import java.util.concurrent.ConcurrentHashMap
 
 @Serializable
+data class TraderSettingsResponse(
+    val paper: Boolean,
+    val startingEquity: Double,
+    val riskPct: Double,
+    val alpacaKeySet: Boolean
+)
+
+@Serializable
 data class SaveTraderSettingsRequest(
-    val alpacaApiKey: String,
-    val alpacaApiSecret: String,
+    val alpacaApiKey: String = "",
+    val alpacaApiSecret: String = "",
     val paper: Boolean = true,
     val startingEquity: Double = 100_000.0,
     val riskPct: Double = 0.005
@@ -64,6 +72,21 @@ fun Route.traderRoutes(
 
     route("/trader/spy-orb") {
 
+        get("/settings") {
+            val userId = call.getUserId()
+            val row = settingsRepo.get(userId)
+            if (row == null) {
+                call.respond(HttpStatusCode.NotFound, mapOf("error" to "No settings saved"))
+                return@get
+            }
+            call.respond(TraderSettingsResponse(
+                paper          = row.paper,
+                startingEquity = row.startingEquity,
+                riskPct        = row.riskPct,
+                alpacaKeySet   = row.encryptedApiKey.isNotEmpty()
+            ))
+        }
+
         get("/status") {
             val userId = call.getUserId()
             val svc = instances[userId]
@@ -81,10 +104,15 @@ fun Route.traderRoutes(
         put("/settings") {
             val userId = call.getUserId()
             val body = call.receive<SaveTraderSettingsRequest>()
+            val existing = settingsRepo.get(userId)
+            val encKey = if (body.alpacaApiKey.isNotBlank()) encryptor.encrypt(body.alpacaApiKey)
+                         else existing?.encryptedApiKey ?: ""
+            val encSecret = if (body.alpacaApiSecret.isNotBlank()) encryptor.encrypt(body.alpacaApiSecret)
+                            else existing?.encryptedApiSecret ?: ""
             settingsRepo.upsert(TraderSettingsRow(
                 userId             = userId,
-                encryptedApiKey    = encryptor.encrypt(body.alpacaApiKey),
-                encryptedApiSecret = encryptor.encrypt(body.alpacaApiSecret),
+                encryptedApiKey    = encKey,
+                encryptedApiSecret = encSecret,
                 paper              = body.paper,
                 startingEquity     = body.startingEquity,
                 riskPct            = body.riskPct

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
-  fetchTraderStatus, saveTraderSettings, startTrader, stopTrader, runBacktest,
+  fetchTraderStatus, fetchTraderSettingsInfo, saveTraderSettings, startTrader, stopTrader, runBacktest,
 } from '../api'
 import type { TraderStatus, BacktestReport } from '../types'
 
@@ -104,9 +104,18 @@ function SettingsTab() {
     alpacaApiKey: '', alpacaApiSecret: '',
     paper: true, startingEquity: 100000, riskPct: 0.005,
   })
+  const [keySet, setKeySet] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState('')
+
+  useEffect(() => {
+    fetchTraderSettingsInfo().then(info => {
+      if (!info) return
+      setKeySet(info.alpacaKeySet)
+      setForm(f => ({ ...f, paper: info.paper, startingEquity: info.startingEquity, riskPct: info.riskPct }))
+    })
+  }, [])
 
   function set(key: string, value: string | boolean | number) {
     setForm(f => ({ ...f, [key]: value }))
@@ -118,6 +127,7 @@ function SettingsTab() {
     try {
       await saveTraderSettings(form)
       setSaved(true)
+      setKeySet(form.alpacaApiKey.trim() !== '' || keySet)
     } catch (e: any) {
       setError(e.message)
     } finally {
@@ -131,13 +141,23 @@ function SettingsTab() {
         <h3 className="text-[13px] font-bold text-gray-700 mb-4">Alpaca Markets</h3>
         <div className="space-y-3">
           <div>
-            <Label>API Key</Label>
-            <Input type="text" placeholder="PKXXXXX..." value={form.alpacaApiKey}
+            <div className="flex items-center justify-between mb-1">
+              <Label>API Key</Label>
+              {keySet && <span className="text-[11px] text-emerald-600 font-medium">✓ saved</span>}
+            </div>
+            <Input type="text"
+              placeholder={keySet ? 'Leave blank to keep existing key' : 'PKXXXXX...'}
+              value={form.alpacaApiKey}
               onChange={e => set('alpacaApiKey', e.target.value)} />
           </div>
           <div>
-            <Label>API Secret</Label>
-            <Input type="password" placeholder="••••••••" value={form.alpacaApiSecret}
+            <div className="flex items-center justify-between mb-1">
+              <Label>API Secret</Label>
+              {keySet && <span className="text-[11px] text-emerald-600 font-medium">✓ saved</span>}
+            </div>
+            <Input type="password"
+              placeholder={keySet ? 'Leave blank to keep existing secret' : '••••••••'}
+              value={form.alpacaApiSecret}
               onChange={e => set('alpacaApiSecret', e.target.value)} />
           </div>
           <div className="flex items-center gap-3 pt-1">

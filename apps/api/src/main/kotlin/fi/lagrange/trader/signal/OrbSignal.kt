@@ -15,9 +15,17 @@ data class OpeningRange(
 data class OrbSetup(
     val orbDefined: Boolean,
     val openingRange: OpeningRange?,
+    // bullish
     val breakoutDetected: Boolean,
     val breakoutBar: Bar?,
-    // intraday indicator values at the breakout bar (or latest bar when no breakout yet)
+    val retestDetected: Boolean = false,
+    val retestBar: Bar? = null,
+    // bearish
+    val bearBreakoutDetected: Boolean = false,
+    val bearBreakoutBar: Bar? = null,
+    val bearRetestDetected: Boolean = false,
+    val bearRetestBar: Bar? = null,
+    // intraday indicator values at the eval bar
     val vwap: Double,
     val vwapSigmaDistance: Double,   // (price − VWAP) / σ
     val priceAboveVwap: Boolean,
@@ -45,7 +53,7 @@ class OrbSignal {
      * [bars5min]  — all 5-min bars available for the session (09:30 ET onward).
      * [dailyAtr]  — ATR(14) on daily bars, used for range and extension checks.
      */
-    fun analyze(bars5min: List<Bar>, dailyAtr: Double): OrbSetup {
+    fun analyze(bars5min: List<Bar>, dailyAtr: Double, evalAtRetest: Boolean = false): OrbSetup {
         if (bars5min.isEmpty()) return empty("No bars provided")
 
         // Filter to regular session (09:30–16:00 ET)
@@ -85,10 +93,24 @@ class OrbSignal {
         val macd       = Indicators.macd(closes)
         val rvolArr    = Indicators.relativeVolume(volumes, 20)
 
-        // Detect first 5-min bar close above OR_high after ORB window
+        // Bullish: first close above OR_high
         val breakIdx = (3 until session.size).firstOrNull { session[it].close > orHigh }
+        val retestIdx = if (breakIdx != null && breakIdx + 1 < session.size) {
+            ((breakIdx + 1) until session.size).firstOrNull { i ->
+                val b = session[i]; b.low <= orHigh * 1.003 && b.close > orHigh
+            }
+        } else null
 
-        val evalIdx = breakIdx ?: (session.size - 1)
+        // Bearish: first close below OR_low
+        val bearBreakIdx = (3 until session.size).firstOrNull { session[it].close < orLow }
+        val bearRetestIdx = if (bearBreakIdx != null && bearBreakIdx + 1 < session.size) {
+            ((bearBreakIdx + 1) until session.size).firstOrNull { i ->
+                val b = session[i]; b.high >= orLow * 0.997 && b.close < orLow
+            }
+        } else null
+
+        // evalIdx: retest bar (when retest mode) or breakout bar or latest
+        val evalIdx = (if (evalAtRetest) retestIdx else null) ?: breakIdx ?: (session.size - 1)
         val bar     = session[evalIdx]
 
         val vwap     = vwapArr[evalIdx]
@@ -103,13 +125,24 @@ class OrbSignal {
         val emaStack = !ema9.isNaN() && !ema21.isNaN() && ema9 > ema21 &&
                        (sma200 == 0.0 || ema21 > sma200)
         val notOvx   = if (breakIdx != null) bar.close - orHigh <= 0.5 * dailyAtr else false
+        // bearish overextension: how far below OR_low the entry is
+        val bearNotOvx = if (bearBreakIdx != null) {
+            val bBar = if (bearRetestIdx != null) session[bearRetestIdx] else session[bearBreakIdx]
+            orLow - bBar.close <= 0.5 * dailyAtr
+        } else false
 
         return OrbSetup(
-            orbDefined       = true,
-            openingRange     = orRange,
-            breakoutDetected = breakIdx != null,
-            breakoutBar      = if (breakIdx != null) bar else null,
-            vwap             = vwap,
+            orbDefined           = true,
+            openingRange         = orRange,
+            breakoutDetected     = breakIdx != null,
+            breakoutBar          = if (breakIdx != null) session[breakIdx] else null,
+            retestDetected       = retestIdx != null,
+            retestBar            = if (retestIdx != null) session[retestIdx] else null,
+            bearBreakoutDetected = bearBreakIdx != null,
+            bearBreakoutBar      = if (bearBreakIdx != null) session[bearBreakIdx] else null,
+            bearRetestDetected   = bearRetestIdx != null,
+            bearRetestBar        = if (bearRetestIdx != null) session[bearRetestIdx] else null,
+            vwap                 = vwap,
             vwapSigmaDistance = vwapSig,
             priceAboveVwap   = bar.close > vwap,
             rvol             = rvol,

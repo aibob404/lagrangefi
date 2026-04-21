@@ -65,7 +65,15 @@ suspend fun main() {
         dailyBars    = dD.await()
         macroHistory = mD.await()
     }
-    println("Data: ${intradayBars.size} 5-min | ${dailyBars.size} daily | ${macroHistory.size} macro\n")
+
+    // SPY buy-and-hold baseline
+    val holdBars = dailyBars.filter { it.date >= LocalDate.parse(startDate) && it.date <= LocalDate.parse(endDate) }
+    val holdReturn = if (holdBars.size >= 2) (holdBars.last().close - holdBars.first().close) / holdBars.first().close else 0.0
+    val holdYears  = 4.0
+    val holdCagr   = Math.pow(1.0 + holdReturn, 1.0 / holdYears) - 1.0
+
+    println("Data: ${intradayBars.size} 5-min | ${dailyBars.size} daily | ${macroHistory.size} macro")
+    println("SPY buy-and-hold: ${String.format("%+.1f%%", holdReturn * 100)} total  ${String.format("%+.1f%%", holdCagr * 100)} CAGR\n")
     http.close()
 
     val backtestConfig = BacktestConfig(
@@ -75,10 +83,10 @@ suspend fun main() {
         riskPct        = 0.005
     )
 
-    // --- Gate rejection funnel (baseline M≥0) ---
-    println("Analysing gate rejection funnel (M≥0 baseline)...")
+    // --- Gate rejection funnel (M≥0, retest) ---
+    println("Analysing gate rejection funnel (M≥0, retest entry)...")
     val rejections = mutableMapOf<String, Int>()
-    BacktestEngine(SignalOrchestrator(SignalConfig(macroGate = 0)), MacroRegimeEngine())
+    BacktestEngine(SignalOrchestrator(SignalConfig(macroGate = 0, retestEntry = true)), MacroRegimeEngine())
         .run(dailyBars, intradayBars, macroHistory, backtestConfig, onEval = { signal ->
             if (signal.direction == TradeDirection.NONE) {
                 val gate = signal.reason.substringBefore(":").trim()
@@ -88,22 +96,52 @@ suspend fun main() {
     val total = rejections.values.sum().toDouble()
     println("Gate rejection funnel (${total.toInt()} non-trade evaluations):")
     rejections.entries.sortedByDescending { it.value }.forEach { (gate, count) ->
-        println("  %-40s %7d  (%4.1f%%)".format(gate, count, count / total * 100))
+        println("  %-45s %7d  (%4.1f%%)".format(gate, count, count / total * 100))
     }
     println()
 
     // --- Parameter sweep ---
     val configs: List<Pair<String, SignalConfig>> = listOf(
-        "M≥-1 RVOL1.5 stop×0.50" to SignalConfig(macroGate = -1, rvolMin = 1.5, stopAtrMult = 0.50),
-        "M≥0  RVOL1.5 stop×0.50" to SignalConfig(macroGate =  0, rvolMin = 1.5, stopAtrMult = 0.50),
-        "M≥1  RVOL1.5 stop×0.50" to SignalConfig(macroGate =  1, rvolMin = 1.5, stopAtrMult = 0.50),
-        "M≥2  RVOL1.5 stop×0.50" to SignalConfig(macroGate =  2, rvolMin = 1.5, stopAtrMult = 0.50),
-        "M≥3  RVOL1.5 stop×0.50" to SignalConfig(macroGate =  3, rvolMin = 1.5, stopAtrMult = 0.50),
-        "M≥4  RVOL1.5 stop×0.50" to SignalConfig(macroGate =  4, rvolMin = 1.5, stopAtrMult = 0.50),
-        "M≥0  RVOL1.5 stop×0.75" to SignalConfig(macroGate =  0, rvolMin = 1.5, stopAtrMult = 0.75),
-        "M≥1  RVOL1.5 stop×0.75" to SignalConfig(macroGate =  1, rvolMin = 1.5, stopAtrMult = 0.75),
-        "M≥0  RVOL2.0 stop×0.50" to SignalConfig(macroGate =  0, rvolMin = 2.0, stopAtrMult = 0.50),
-        "M≥1  RVOL2.0 stop×0.50" to SignalConfig(macroGate =  1, rvolMin = 2.0, stopAtrMult = 0.50),
+        // Baseline (no retest) — reference points
+        "Chase  M≥2  RVOL1.5 stop×0.50"   to SignalConfig(macroGate = 2, rvolMin = 1.5, stopAtrMult = 0.50),
+        "Chase  M≥1  RVOL1.5 stop×0.50"   to SignalConfig(macroGate = 1, rvolMin = 1.5, stopAtrMult = 0.50),
+        "Chase  M≥0  RVOL1.5 stop×0.50"   to SignalConfig(macroGate = 0, rvolMin = 1.5, stopAtrMult = 0.50),
+
+        // Retest entry (core hypothesis)
+        "Retest M≥2  RVOL1.5 stop×0.50"   to SignalConfig(macroGate = 2, rvolMin = 1.5, stopAtrMult = 0.50, retestEntry = true),
+        "Retest M≥1  RVOL1.5 stop×0.50"   to SignalConfig(macroGate = 1, rvolMin = 1.5, stopAtrMult = 0.50, retestEntry = true),
+        "Retest M≥0  RVOL1.5 stop×0.50"   to SignalConfig(macroGate = 0, rvolMin = 1.5, stopAtrMult = 0.50, retestEntry = true),
+
+        // Retest + looser RVOL
+        "Retest M≥2  RVOL1.2 stop×0.50"   to SignalConfig(macroGate = 2, rvolMin = 1.2, stopAtrMult = 0.50, retestEntry = true),
+        "Retest M≥1  RVOL1.2 stop×0.50"   to SignalConfig(macroGate = 1, rvolMin = 1.2, stopAtrMult = 0.50, retestEntry = true),
+        "Retest M≥0  RVOL1.2 stop×0.50"   to SignalConfig(macroGate = 0, rvolMin = 1.2, stopAtrMult = 0.50, retestEntry = true),
+
+        // Retest + wider RSI window
+        "Retest M≥2  RVOL1.2 RSI45-75"    to SignalConfig(macroGate = 2, rvolMin = 1.2, stopAtrMult = 0.50, retestEntry = true, rsiMin = 45.0, rsiMax = 75.0),
+        "Retest M≥1  RVOL1.2 RSI45-75"    to SignalConfig(macroGate = 1, rvolMin = 1.2, stopAtrMult = 0.50, retestEntry = true, rsiMin = 45.0, rsiMax = 75.0),
+        "Retest M≥0  RVOL1.2 RSI45-75"    to SignalConfig(macroGate = 0, rvolMin = 1.2, stopAtrMult = 0.50, retestEntry = true, rsiMin = 45.0, rsiMax = 75.0),
+
+        // Retest + no MACD filter
+        "Retest M≥2  noMACD  RSI45-75"     to SignalConfig(macroGate = 2, rvolMin = 1.2, stopAtrMult = 0.50, retestEntry = true, rsiMin = 45.0, rsiMax = 75.0, requireMacd = false),
+        "Retest M≥1  noMACD  RSI45-75"     to SignalConfig(macroGate = 1, rvolMin = 1.2, stopAtrMult = 0.50, retestEntry = true, rsiMin = 45.0, rsiMax = 75.0, requireMacd = false),
+        "Retest M≥0  noMACD  RSI45-75"     to SignalConfig(macroGate = 0, rvolMin = 1.2, stopAtrMult = 0.50, retestEntry = true, rsiMin = 45.0, rsiMax = 75.0, requireMacd = false),
+
+        // Retest + wider stop (give trades more room)
+        "Retest M≥1  RVOL1.2 stop×0.75"   to SignalConfig(macroGate = 1, rvolMin = 1.2, stopAtrMult = 0.75, retestEntry = true, rsiMin = 45.0, rsiMax = 75.0, requireMacd = false),
+        "Retest M≥0  RVOL1.2 stop×0.75"   to SignalConfig(macroGate = 0, rvolMin = 1.2, stopAtrMult = 0.75, retestEntry = true, rsiMin = 45.0, rsiMax = 75.0, requireMacd = false),
+
+        // Diagnostic: force-short everything (no long gate, no RVOL filter)
+        "DIAG: short-only no gate no RVOL" to SignalConfig(macroGate = 100, rvolMin = 0.0, stopAtrMult = 0.50, allowShorts = true, shortMacroGate = 100),
+
+        // Bidirectional: long when bullish macro, short when bearish
+        "Chase  L≥2/S≤-1 RVOL1.5"         to SignalConfig(macroGate = 2, rvolMin = 1.5, stopAtrMult = 0.50, allowShorts = true, shortMacroGate = -1),
+        "Chase  L≥1/S≤-1 RVOL1.5"         to SignalConfig(macroGate = 1, rvolMin = 1.5, stopAtrMult = 0.50, allowShorts = true, shortMacroGate = -1),
+        "Chase  L≥2/S≤-2 RVOL1.5"         to SignalConfig(macroGate = 2, rvolMin = 1.5, stopAtrMult = 0.50, allowShorts = true, shortMacroGate = -2),
+        "Retest L≥2/S≤-1 RVOL1.2 RSI45-75" to SignalConfig(macroGate = 2, rvolMin = 1.2, stopAtrMult = 0.50, retestEntry = true, rsiMin = 45.0, rsiMax = 75.0, allowShorts = true, shortMacroGate = -1),
+        "Retest L≥1/S≤-1 RVOL1.2 RSI45-75" to SignalConfig(macroGate = 1, rvolMin = 1.2, stopAtrMult = 0.50, retestEntry = true, rsiMin = 45.0, rsiMax = 75.0, allowShorts = true, shortMacroGate = -1),
+        "Retest L≥2/S≤-1 noMACD"           to SignalConfig(macroGate = 2, rvolMin = 1.2, stopAtrMult = 0.50, retestEntry = true, rsiMin = 45.0, rsiMax = 75.0, requireMacd = false, allowShorts = true, shortMacroGate = -1),
+        "Retest L≥1/S≤-1 noMACD"           to SignalConfig(macroGate = 1, rvolMin = 1.2, stopAtrMult = 0.50, retestEntry = true, rsiMin = 45.0, rsiMax = 75.0, requireMacd = false, allowShorts = true, shortMacroGate = -1),
     )
 
     println("Running ${configs.size} configs in parallel...\n")
@@ -117,16 +155,31 @@ suspend fun main() {
         }.awaitAll()
     }
 
-    val col = "%-26s"
+    val col = "%-40s"
     val hdr = "$col %6s %5s %6s %6s %7s %7s %6s".format(
         "Config", "Trades", "Win%", "PF", "Sharpe", "MaxDD%", "Net%", "CAGR%"
     )
     println(hdr)
     println("─".repeat(hdr.length))
+
+    // SPY hold row
+    println("$col %6s %5s %6s %6s %6s%% %6s%% %5s%%".format(
+        "★ SPY buy-and-hold", "-", "-", "-", "-",
+        String.format("%.1f", 0.0),
+        String.format("%.2f", holdReturn * 100),
+        String.format("%.2f", holdCagr * 100)
+    ))
+    println("─".repeat(hdr.length))
+
     for ((label, r) in results) {
-        println("$col %6d %4.1f%% %6.2f %6.2f %6.1f%% %6.2f%% %5.2f%%".format(
+        val beatsHold = r.annualisedReturn > holdCagr
+        val marker = if (beatsHold) "★" else " "
+        println("$marker$col %6d %4.1f%% %6.2f %6.2f %6.1f%% %6.2f%% %5.2f%%".format(
             label, r.totalTrades, r.winRate * 100, r.profitFactor,
             r.sharpe, r.maxDrawdownPct * 100, r.netReturn * 100, r.annualisedReturn * 100
         ))
     }
+
+    val winners = results.filter { (_, r) -> r.annualisedReturn > holdCagr }
+    println("\n${winners.size}/${configs.size} configs beat SPY buy-and-hold (${String.format("%.1f%%", holdCagr * 100)} CAGR)")
 }

@@ -148,7 +148,7 @@ class BacktestEngine(
                 )
                 val signal = orchestrator.evaluate(input)
                 onEval?.invoke(signal)
-                if (signal.direction == TradeDirection.LONG) {
+                if (signal.direction == TradeDirection.LONG || signal.direction == TradeDirection.SHORT) {
                     portfolio.onSignal(signal, bar.timestamp)
                 }
             }

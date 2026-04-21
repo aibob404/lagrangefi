@@ -13,7 +13,8 @@ import kotlinx.datetime.toLocalDateTime
 
 private data class OpenPosition(
     val entry: TradeEntry,
-    val leg1: Int,             // shares in each leg
+    val isShort: Boolean,
+    val leg1: Int,
     val leg2: Int,
     val leg3: Int,
     var stopPrice: Double,
@@ -21,16 +22,9 @@ private data class OpenPosition(
     val tp2Price: Double,
     var tp1Hit: Boolean = false,
     var tp2Hit: Boolean = false,
-    var trailHigh: Double = 0.0
+    var trailExtreme: Double = 0.0   // for longs: highest high; for shorts: lowest low
 )
 
-/**
- * Tracks equity, open position, and completed trades for one backtest run.
- *
- * Call [onSignal] when the orchestrator produces a LONG entry.
- * Call [onBar] for every 5-minute bar to check TP/stop/EOD exit.
- * Circuit-breaker state is checked externally via [isDayHalted], [isWeekHalted].
- */
 class Portfolio(startingEquity: Double) {
 
     var equity: Double = startingEquity
@@ -40,7 +34,6 @@ class Portfolio(startingEquity: Double) {
 
     val completedTrades: MutableList<CompletedTrade> = mutableListOf()
 
-    // Running P&L windows for circuit breakers
     var dailyPnl:   Double = 0.0; private set
     var weeklyPnl:  Double = 0.0; private set
     var monthlyPnl: Double = 0.0; private set
@@ -52,7 +45,6 @@ class Portfolio(startingEquity: Double) {
     val isMonthHalted:   Boolean get() = monthlyPnl < -equity * 0.070
     val isPeakHalted:    Boolean get() = equity     < peakEquity * 0.850
 
-    // Slippage model: 1bp per side during regular hours
     private val slippagePct = 0.0001
 
     fun resetDailyPnl()   { dailyPnl  = 0.0 }
@@ -60,92 +52,105 @@ class Portfolio(startingEquity: Double) {
     fun resetMonthlyPnl() { monthlyPnl = 0.0 }
 
     fun onSignal(signal: TradeSignal, now: Instant) {
-        if (signal.direction != TradeDirection.LONG || position != null) return
-        val entryWithSlippage = signal.entryPrice * (1.0 + slippagePct)
+        if (position != null) return
+        val isShort = signal.direction == TradeDirection.SHORT
+        if (!isShort && signal.direction != TradeDirection.LONG) return
+
+        // slippage: longs fill slightly above, shorts slightly below
+        val entryPrice = if (isShort) signal.entryPrice * (1.0 - slippagePct)
+                         else         signal.entryPrice * (1.0 + slippagePct)
         val shares = signal.shares
         val leg    = shares / 3
         val entry  = TradeEntry(
             timestamp    = now,
-            price        = entryWithSlippage,
+            price        = entryPrice,
             shares       = shares,
             stopPrice    = signal.stopPrice,
             tp1Price     = signal.tp1Price,
             tp2Price     = signal.tp2Price,
-            riskAmount   = (entryWithSlippage - signal.stopPrice) * shares,
+            riskAmount   = if (isShort) (signal.stopPrice - entryPrice) * shares
+                           else         (entryPrice - signal.stopPrice) * shares,
             qualityScore = signal.qualityScore,
             macroScore   = signal.macroScore,
             reason       = signal.reason
         )
         position = OpenPosition(
-            entry     = entry,
-            leg1      = leg,
-            leg2      = leg,
-            leg3      = shares - 2 * leg,
-            stopPrice = signal.stopPrice,
-            tp1Price  = signal.tp1Price,
-            tp2Price  = signal.tp2Price,
-            trailHigh = entryWithSlippage
+            entry         = entry,
+            isShort       = isShort,
+            leg1          = leg,
+            leg2          = leg,
+            leg3          = shares - 2 * leg,
+            stopPrice     = signal.stopPrice,
+            tp1Price      = signal.tp1Price,
+            tp2Price      = signal.tp2Price,
+            trailExtreme  = entryPrice
         )
     }
 
-    /**
-     * Called on every 5-minute bar. Checks stop-loss, TP1, TP2, TP3 trail, and EOD time-stop.
-     * Returns a [CompletedTrade] if the position was fully closed this bar, else null.
-     */
     fun onBar(bar: Bar, atr5: Double): CompletedTrade? {
         val pos = position ?: return null
         val exits = mutableListOf<TradeExit>()
         val etZone = TimeZone.of("America/New_York")
         val lt = bar.timestamp.toLocalDateTime(etZone)
 
-        // Update chandelier trail high
-        if (bar.high > pos.trailHigh) pos.trailHigh = bar.high
-        val trailStop = pos.trailHigh - 2.5 * atr5
+        // Update chandelier extreme
+        if (pos.isShort) {
+            if (bar.low < pos.trailExtreme) pos.trailExtreme = bar.low
+        } else {
+            if (bar.high > pos.trailExtreme) pos.trailExtreme = bar.high
+        }
+        val trailStop = if (pos.isShort) pos.trailExtreme + 2.5 * atr5
+                        else             pos.trailExtreme - 2.5 * atr5
 
         // --- EOD time-stop at 15:55 ET ---
         val isEod = lt.hour == 15 && lt.minute >= 55
         if (isEod) {
-            val exitPrice = bar.close * (1.0 - slippagePct)
+            val exitPrice = if (pos.isShort) bar.close * (1.0 + slippagePct)
+                            else             bar.close * (1.0 - slippagePct)
             val remainingShares = remainingShares(pos)
             if (remainingShares > 0) exits.add(TradeExit(bar.timestamp, exitPrice, remainingShares, ExitReason.EOD_CLOSE))
             return close(pos, exits)
         }
 
-        // --- Stop-loss (or breakeven stop after TP1) ---
-        if (bar.low <= pos.stopPrice) {
-            val exitPrice = (pos.stopPrice * (1.0 - slippagePct)).coerceAtMost(bar.open)
+        val stopHit = if (pos.isShort) bar.high >= pos.stopPrice else bar.low <= pos.stopPrice
+        if (stopHit) {
+            val exitPrice = if (pos.isShort) (pos.stopPrice * (1.0 + slippagePct)).coerceAtLeast(bar.open)
+                            else             (pos.stopPrice * (1.0 - slippagePct)).coerceAtMost(bar.open)
             val remainingShares = remainingShares(pos)
             val reason = if (pos.tp1Hit) ExitReason.BREAKEVEN_STOP else ExitReason.STOP_LOSS
             exits.add(TradeExit(bar.timestamp, exitPrice, remainingShares, reason))
             return close(pos, exits)
         }
 
-        // --- TP1 (1R) ---
-        if (!pos.tp1Hit && bar.high >= pos.tp1Price) {
-            val exitPrice = pos.tp1Price * (1.0 - slippagePct)
+        // TP1
+        val tp1Hit = if (pos.isShort) bar.low <= pos.tp1Price else bar.high >= pos.tp1Price
+        if (!pos.tp1Hit && tp1Hit) {
+            val exitPrice = if (pos.isShort) pos.tp1Price * (1.0 + slippagePct)
+                            else             pos.tp1Price * (1.0 - slippagePct)
             exits.add(TradeExit(bar.timestamp, exitPrice, pos.leg1, ExitReason.TP1))
             pos.tp1Hit = true
             pos.stopPrice = pos.entry.price  // move to breakeven
         }
 
-        // --- TP2 (2R) ---
-        if (pos.tp1Hit && !pos.tp2Hit && bar.high >= pos.tp2Price) {
-            val exitPrice = pos.tp2Price * (1.0 - slippagePct)
+        // TP2
+        val tp2Hit = if (pos.isShort) bar.low <= pos.tp2Price else bar.high >= pos.tp2Price
+        if (pos.tp1Hit && !pos.tp2Hit && tp2Hit) {
+            val exitPrice = if (pos.isShort) pos.tp2Price * (1.0 + slippagePct)
+                            else             pos.tp2Price * (1.0 - slippagePct)
             exits.add(TradeExit(bar.timestamp, exitPrice, pos.leg2, ExitReason.TP2))
             pos.tp2Hit = true
         }
 
-        // --- TP3: chandelier trailing stop (only when TP1 and TP2 already hit) ---
-        if (pos.tp1Hit && pos.tp2Hit && bar.low <= trailStop) {
-            val exitPrice = (trailStop * (1.0 - slippagePct)).coerceAtMost(bar.open)
+        // TP3: chandelier trail
+        val trailHit = if (pos.isShort) bar.high >= trailStop else bar.low <= trailStop
+        if (pos.tp1Hit && pos.tp2Hit && trailHit) {
+            val exitPrice = if (pos.isShort) (trailStop * (1.0 + slippagePct)).coerceAtLeast(bar.open)
+                            else             (trailStop * (1.0 - slippagePct)).coerceAtMost(bar.open)
             exits.add(TradeExit(bar.timestamp, exitPrice, pos.leg3, ExitReason.TP3_TRAIL))
             return close(pos, exits)
         }
 
-        // Record partial exits (TP1/TP2) — position still open
-        if (exits.isNotEmpty()) {
-            exits.forEach { exit -> applyPnl(pos.entry, exit) }
-        }
+        if (exits.isNotEmpty()) exits.forEach { exit -> applyPnl(pos, exit) }
         return null
     }
 
@@ -157,8 +162,9 @@ class Portfolio(startingEquity: Double) {
     }
 
     private fun close(pos: OpenPosition, exits: List<TradeExit>): CompletedTrade {
-        exits.forEach { exit -> applyPnl(pos.entry, exit) }
-        val totalPnl    = exits.sumOf { (it.price - pos.entry.price) * it.shares }
+        exits.forEach { exit -> applyPnl(pos, exit) }
+        val sign        = if (pos.isShort) -1.0 else 1.0
+        val totalPnl    = exits.sumOf { (it.price - pos.entry.price) * it.shares * sign }
         val totalShares = pos.leg1 + pos.leg2 + pos.leg3
         val pnlPct      = totalPnl / (pos.entry.price * totalShares)
         val holdMs      = (exits.last().timestamp - pos.entry.timestamp).inWholeMilliseconds
@@ -168,8 +174,9 @@ class Portfolio(startingEquity: Double) {
         return trade
     }
 
-    private fun applyPnl(entry: TradeEntry, exit: TradeExit) {
-        val pnl = (exit.price - entry.price) * exit.shares
+    private fun applyPnl(pos: OpenPosition, exit: TradeExit) {
+        val sign = if (pos.isShort) -1.0 else 1.0
+        val pnl  = (exit.price - pos.entry.price) * exit.shares * sign
         equity      += pnl
         dailyPnl    += pnl
         weeklyPnl   += pnl

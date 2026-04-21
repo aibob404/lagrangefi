@@ -60,26 +60,26 @@ class SignalOrchestrator(
         if (event.status == EventCalendarStatus.BLOCKED)
             return noTrade("Gate 1: ${event.reason}")
 
-        // --- Gate 2: macro regime (M_base ≥ 1 required) ---
+        // --- Gate 2: macro regime ---
         val macro = input.precomputedMacro
             ?: macroEngine.compute(input.spyDailyBars, input.macroHistory)
             ?: return noTrade("Gate 2: insufficient macro history (need 200+ daily bars)")
-        if (macro.mBase < config.macroGate)
-            return noTrade("Gate 2: macro score ${macro.mBase} < ${config.macroGate} (regime=${macro.regime})")
 
         // --- Gate 3: volatility regime ---
         val vol = volEngine.compute(input.macroHistory.last())
-        if (!vol.allowBreakouts)
-            return noTrade("Gate 3: vol regime blocks breakouts (VIX=${vol.vix}, R=${String.format("%.2f", vol.ratio)}, regime=${vol.vixRegime})")
+        // VVIX veto is a hard halt for both directions
         if (vol.vvixVeto)
             return noTrade("Gate 3: VVIX veto (${vol.vvix} > 130)")
+        // Long breakout gate — if blocked, try shorts before giving up
+        val longVolBlocked = !vol.allowBreakouts
+        val shortVolBlocked = !vol.allowShortBreakouts
 
         // --- Gate 4: time-of-day window (09:45–15:30 ET) ---
         val t = input.timeEt
         if (t < LocalTime(9, 45) || t > LocalTime(15, 30))
             return noTrade("Gate 4: outside trading window ($t ET)")
 
-        // --- Daily ATR (used for ORB range check and stop sizing) ---
+        // --- Daily ATR ---
         if (input.spyDailyBars.size < 15)
             return noTrade("Insufficient daily bars for ATR calculation")
         val dHighs  = input.spyDailyBars.map { it.high }.toDoubleArray()
@@ -88,21 +88,46 @@ class SignalOrchestrator(
         val dailyAtr = Indicators.atr(dHighs, dLows, dCloses, 14)
             .lastOrNull { !it.isNaN() } ?: return noTrade("Daily ATR computation failed")
 
-        // --- Gates 5–13: ORB signal (14-item checklist) ---
-        val orb = orbSignal.analyze(input.spy5minBars, dailyAtr)
-        if (!orb.orbDefined)        return noTrade("Gate 5: ORB not yet defined — ${orb.reason}")
-        if (!orb.orRangeValid)      return noTrade("Gate 5: OR range ${String.format("%.2f", orb.openingRange?.range)} invalid vs ATR ${String.format("%.2f", dailyAtr)}")
-        if (!orb.breakoutDetected)  return noTrade("Gate 6: no 5-min close above OR_high — ${orb.reason}")
+        // --- ORB analysis (needed for both long and short paths) ---
+        val orb = orbSignal.analyze(input.spy5minBars, dailyAtr, evalAtRetest = config.retestEntry)
+        if (!orb.orbDefined) return noTrade("Gate 5: ORB not yet defined — ${orb.reason}")
 
-        val bBar = orb.breakoutBar!!
+        // --- Short path helper (OR range validity checked inside evaluateShort) ---
+        fun tryShort() = evaluateShort(orb, macro, vol, event, input, dailyAtr)
+
+        // Long vol blocked → try short before returning
+        if (longVolBlocked) {
+            tryShort()?.let { return it }
+            return noTrade("Gate 3: vol regime blocks breakouts (VIX=${vol.vix}, R=${String.format("%.2f", vol.ratio)}, regime=${vol.vixRegime})")
+        }
+
+        // Macro not bullish enough for longs → try short
+        val longEligible = macro.mBase >= config.macroGate
+        if (!longEligible) {
+            tryShort()?.let { return it }
+            return noTrade("Gate 2: macro score ${macro.mBase} < ${config.macroGate} (regime=${macro.regime})")
+        }
+
+        // OR range validity (only blocks longs, shorts checked inside evaluateShort)
+        if (!orb.orRangeValid) return noTrade("Gate 5: OR range ${String.format("%.2f", orb.openingRange?.range)} invalid vs ATR ${String.format("%.2f", dailyAtr)}")
+
+        // Long breakout gates
+        if (!orb.breakoutDetected) return noTrade("Gate 6: no 5-min close above OR_high — ${orb.reason}")
+
+        if (config.retestEntry && !orb.retestDetected)
+            return noTrade("Gate 6b: breakout found, waiting for retest of OR_high")
+
+
+        val bBar = if (config.retestEntry) orb.retestBar!! else orb.breakoutBar!!
 
         if (orb.rvol < config.rvolMin)              return noTrade("Gate 7: RVOL ${String.format("%.2f", orb.rvol)} < ${config.rvolMin}")
         if (!orb.priceAboveVwap)                   return noTrade("Gate 8: price ${bBar.close} below VWAP ${String.format("%.2f", orb.vwap)}")
         if (!orb.notOverextended)                  return noTrade("Gate 9: entry overextended above OR_high")
         if (!orb.emaStackBull)                     return noTrade("Gate 10: EMA stack not bullish (9>21>200)")
-        if (orb.rsi14 < 50.0 || orb.rsi14 > 70.0) return noTrade("Gate 11: RSI ${String.format("%.1f", orb.rsi14)} outside [50, 70]")
-        if (orb.macdHistogram <= 0.0 || !orb.macdRising)
-                                                   return noTrade("Gate 12: MACD histogram not positive/rising")
+        if (orb.rsi14 < config.rsiMin || orb.rsi14 > config.rsiMax)
+            return noTrade("Gate 11: RSI ${String.format("%.1f", orb.rsi14)} outside [${config.rsiMin}, ${config.rsiMax}]")
+        if (config.requireMacd && (orb.macdHistogram <= 0.0 || !orb.macdRising))
+            return noTrade("Gate 12: MACD histogram not positive/rising")
 
         // Gate 13: prior-day POC proximity filter
         val poc = input.priorDayPoc
@@ -160,6 +185,63 @@ class SignalOrchestrator(
                              "RVOL=${String.format("%.1f", orb.rvol)} " +
                              "VIX=${String.format("%.1f", vol.vix)} " +
                              "ratio=${String.format("%.2f", vol.ratio)}"
+        )
+    }
+
+    // ── Short (bearish ORB breakdown) ─────────────────────────────────────────
+
+    private fun evaluateShort(
+        orb: OrbSetup,
+        macro: MacroRegimeResult,
+        vol: VolatilityRegimeResult,
+        event: EventResult,
+        input: OrchestratorInput,
+        dailyAtr: Double
+    ): TradeSignal? {
+        if (!config.allowShorts) return null
+        if (!vol.allowShortBreakouts) return null
+        if (macro.mBase > config.shortMacroGate) return null
+
+        if (input.spy5minBars.size < 15) return null   // not enough bars for ATR(14)
+        if (!orb.bearBreakoutDetected) return null
+        if (config.retestEntry && !orb.bearRetestDetected) return null
+
+        val bBar = if (config.retestEntry) orb.bearRetestBar!! else orb.bearBreakoutBar!!
+        val orLow = orb.openingRange?.low ?: return null
+
+        if (orb.rvol < config.rvolMin) return null
+        if (bBar.close > orb.vwap) return null          // price above VWAP — not bearish
+        val bearNotOvx = orLow - bBar.close <= 0.5 * dailyAtr
+        if (!bearNotOvx) return null
+
+        val iHighs  = input.spy5minBars.map { it.high }.toDoubleArray()
+        val iLows   = input.spy5minBars.map { it.low }.toDoubleArray()
+        val iCloses = input.spy5minBars.map { it.close }.toDoubleArray()
+        val atr5    = Indicators.atr(iHighs, iLows, iCloses, 14)
+            .lastOrNull { !it.isNaN() } ?: (dailyAtr / 5.0)
+
+        val stopDist   = config.stopAtrMult * atr5
+        val entryPrice = bBar.close
+        val stopPrice  = entryPrice + stopDist       // stop ABOVE entry for short
+        val tp1Price   = entryPrice - stopDist       // 1R below
+        val tp2Price   = entryPrice - 2.0 * stopDist
+        val riskDollar = input.accountEquity * input.riskPct
+        val rawShares  = if (stopDist > 0) (riskDollar / stopDist).toInt() else 0
+        val sizeMult   = vol.sizeMultiplier * (if (event.status == EventCalendarStatus.CAUTION) 0.75 else 1.0)
+        val shares     = (rawShares * sizeMult).toInt().coerceAtLeast(1)
+
+        return TradeSignal(
+            direction      = TradeDirection.SHORT,
+            entryPrice     = entryPrice,
+            stopPrice      = stopPrice,
+            tp1Price       = tp1Price,
+            tp2Price       = tp2Price,
+            shares         = shares,
+            qualityScore   = 5,
+            macroScore     = macro.mBase,
+            sizeMultiplier = sizeMult,
+            gatesPassed    = emptyMap(),
+            reason         = "ORB short: M=${macro.mBase} RVOL=${String.format("%.1f", orb.rvol)}"
         )
     }
 

@@ -12,9 +12,10 @@ data class VolatilityRegimeResult(
     val ratio: Double,             // VIX / VIX3M
     val vixRegime: VixRegime,
     val termStructure: TermStructure,
-    val allowBreakouts: Boolean,
-    val sizeMultiplier: Double,    // position-size factor [0.0, 1.0]
-    val vvixVeto: Boolean          // true when VVIX > 130 — hard halt
+    val allowBreakouts: Boolean,      // long breakouts allowed
+    val allowShortBreakouts: Boolean, // bearish breakdowns allowed (backwardation = fear = good for shorts)
+    val sizeMultiplier: Double,
+    val vvixVeto: Boolean
 )
 
 class VolatilityRegimeEngine {
@@ -57,16 +58,21 @@ class VolatilityRegimeEngine {
             else -> 1.0
         }
 
+        // Shorts are allowed even in backwardation (fear = good for downside trades)
+        // but still blocked during EXTREME/CRISIS (violent reversals) and VVIX veto
+        val allowShortBreakouts = vixRegime != VixRegime.EXTREME && vixRegime != VixRegime.CRISIS
+
         return VolatilityRegimeResult(
-            vix           = vix,
-            vix3m         = vix3m,
-            vvix          = vvix,
-            ratio         = ratio,
-            vixRegime     = vixRegime,
-            termStructure = termStructure,
-            allowBreakouts = allowBreakouts,
-            sizeMultiplier = sizeMultiplier,
-            vvixVeto      = vvix > 130.0
+            vix                 = vix,
+            vix3m               = vix3m,
+            vvix                = vvix,
+            ratio               = ratio,
+            vixRegime           = vixRegime,
+            termStructure       = termStructure,
+            allowBreakouts      = allowBreakouts,
+            allowShortBreakouts = allowShortBreakouts,
+            sizeMultiplier      = sizeMultiplier,
+            vvixVeto            = vvix > 130.0
         )
     }
 }

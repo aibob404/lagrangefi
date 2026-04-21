@@ -150,12 +150,11 @@ object StrategySnapshots : Table("strategy_snapshots") {
     override val primaryKey = PrimaryKey(id)
 }
 
-/** Per-user Alpaca + FRED credentials for the SPY trader. Keys are AES-256-GCM encrypted at rest. */
+/** Per-user Alpaca credentials for the SPY trader. Keys are AES-256-GCM encrypted at rest. */
 object TraderSettings : Table("trader_settings") {
     val userId            = integer("user_id").references(Users.id).uniqueIndex()
     val encryptedApiKey   = text("encrypted_api_key")
     val encryptedApiSecret = text("encrypted_api_secret")
-    val fredApiKey        = varchar("fred_api_key", 64).default("")  // not sensitive — free key
     val paper             = bool("paper").default(true)
     val startingEquity    = double("starting_equity").default(100_000.0)
     val riskPct           = double("risk_pct").default(0.005)

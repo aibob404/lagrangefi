@@ -15,7 +15,6 @@ data class TraderSettingsRow(
     val userId: Int,
     val encryptedApiKey: String,
     val encryptedApiSecret: String,
-    val fredApiKey: String,
     val paper: Boolean,
     val startingEquity: Double,
     val riskPct: Double
@@ -29,7 +28,6 @@ class TraderSettingsRepository {
                 userId            = it[TraderSettings.userId],
                 encryptedApiKey   = it[TraderSettings.encryptedApiKey],
                 encryptedApiSecret = it[TraderSettings.encryptedApiSecret],
-                fredApiKey        = it[TraderSettings.fredApiKey],
                 paper             = it[TraderSettings.paper],
                 startingEquity    = it[TraderSettings.startingEquity],
                 riskPct           = it[TraderSettings.riskPct]
@@ -44,7 +42,6 @@ class TraderSettingsRepository {
             TraderSettings.update({ TraderSettings.userId eq row.userId }) {
                 it[encryptedApiKey]    = row.encryptedApiKey
                 it[encryptedApiSecret] = row.encryptedApiSecret
-                it[fredApiKey]         = row.fredApiKey
                 it[paper]              = row.paper
                 it[startingEquity]     = row.startingEquity
                 it[riskPct]            = row.riskPct
@@ -55,7 +52,6 @@ class TraderSettingsRepository {
                 it[userId]             = row.userId
                 it[encryptedApiKey]    = row.encryptedApiKey
                 it[encryptedApiSecret] = row.encryptedApiSecret
-                it[fredApiKey]         = row.fredApiKey
                 it[paper]              = row.paper
                 it[startingEquity]     = row.startingEquity
                 it[riskPct]            = row.riskPct

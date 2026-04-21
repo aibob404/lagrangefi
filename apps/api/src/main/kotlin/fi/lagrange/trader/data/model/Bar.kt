@@ -23,17 +23,11 @@ data class DailyBar(
     val volume: Long = 0
 )
 
-data class FredSeries(
-    val date: kotlinx.datetime.LocalDate,
-    val value: Double
-)
-
 data class MacroSnapshot(
     val date: kotlinx.datetime.LocalDate,
-    val fedFundsRate: Double,
-    val yield2y: Double,
-    val yield10y: Double,
-    val yield3m: Double,
+    val fedFundsRate: Double,  // sourced from ^irx (13W T-bill — tracks FFR closely)
+    val yield10y: Double,      // sourced from ^tnx
+    val yield3m: Double,       // same as fedFundsRate (^irx)
     val hygClose: Double,
     val lqdClose: Double,
     val vixClose: Double,

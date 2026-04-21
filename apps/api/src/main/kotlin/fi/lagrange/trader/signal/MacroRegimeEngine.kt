@@ -67,14 +67,13 @@ class MacroRegimeEngine {
             else       -> -2
         }
 
-        // --- Component 4: Yield curve (2Y/10Y) ---
-        val spread2y10y = latest.yield10y - latest.yield2y
-        val spread3m10y = latest.yield10y - latest.yield3m
+        // --- Component 4: Yield curve (10Y - 3M) ---
+        val spread2y10y = latest.yield10y - latest.yield3m  // 3M T-bill as short rate
         val yieldScore = when {
-            spread2y10y >  1.0 && spread3m10y > 0 ->  1   // healthy normal
-            spread2y10y >=  0.0 ->  0                      // flat/slightly positive
-            spread2y10y >= -0.5 -> -1                      // shallow inversion
-            else               -> -2                       // deep inversion
+            spread2y10y >  1.0 ->  1   // healthy steepening
+            spread2y10y >= 0.0 ->  0   // flat
+            spread2y10y >= -0.5 -> -1  // shallow inversion
+            else               -> -2   // deep inversion
         }
 
         // --- Component 5: Credit spreads — HYG/LQD z-score ---

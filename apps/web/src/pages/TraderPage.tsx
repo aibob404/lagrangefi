@@ -101,7 +101,7 @@ function StatRow({ label, value, accent = false }: { label: string; value: strin
 
 function SettingsTab() {
   const [form, setForm] = useState({
-    alpacaApiKey: '', alpacaApiSecret: '', fredApiKey: '',
+    alpacaApiKey: '', alpacaApiSecret: '',
     paper: true, startingEquity: 100000, riskPct: 0.005,
   })
   const [saving, setSaving] = useState(false)
@@ -148,15 +148,6 @@ function SettingsTab() {
               Paper trading mode <span className="text-gray-400">(recommended for testing)</span>
             </label>
           </div>
-        </div>
-      </Card>
-
-      <Card>
-        <h3 className="text-[13px] font-bold text-gray-700 mb-4">FRED (macro data)</h3>
-        <div>
-          <Label>API Key <span className="normal-case font-normal text-gray-400">— free at fred.stlouisfed.org</span></Label>
-          <Input type="text" placeholder="abcdef1234567890..." value={form.fredApiKey}
-            onChange={e => set('fredApiKey', e.target.value)} />
         </div>
       </Card>
 

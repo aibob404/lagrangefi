@@ -17,7 +17,6 @@ import java.util.concurrent.ConcurrentHashMap
 data class SaveTraderSettingsRequest(
     val alpacaApiKey: String,
     val alpacaApiSecret: String,
-    val fredApiKey: String = "",
     val paper: Boolean = true,
     val startingEquity: Double = 100_000.0,
     val riskPct: Double = 0.005
@@ -69,7 +68,11 @@ fun Route.traderRoutes(
             val userId = call.getUserId()
             val svc = instances[userId]
             if (svc == null) {
-                call.respond(mapOf("running" to false, "message" to "Trader not started"))
+                call.respond(TraderStatus(
+                    running = false, accountEquity = 0.0, dailyPnl = 0.0,
+                    hasOpenPosition = false, macroRegime = "UNKNOWN",
+                    vixRegime = "UNKNOWN", lastSignalReason = "not started"
+                ))
                 return@get
             }
             call.respond(svc.status())
@@ -82,7 +85,6 @@ fun Route.traderRoutes(
                 userId             = userId,
                 encryptedApiKey    = encryptor.encrypt(body.alpacaApiKey),
                 encryptedApiSecret = encryptor.encrypt(body.alpacaApiSecret),
-                fredApiKey         = body.fredApiKey,
                 paper              = body.paper,
                 startingEquity     = body.startingEquity,
                 riskPct            = body.riskPct
@@ -104,7 +106,6 @@ fun Route.traderRoutes(
             val svc = TraderService(
                 alpacaKey      = encryptor.decrypt(row.encryptedApiKey),
                 alpacaSecret   = encryptor.decrypt(row.encryptedApiSecret),
-                fredKey        = row.fredApiKey,
                 paper          = row.paper,
                 startingEquity = row.startingEquity,
                 riskPct        = row.riskPct
@@ -139,7 +140,6 @@ fun Route.traderRoutes(
             val svc = TraderService(
                 alpacaKey      = encryptor.decrypt(row.encryptedApiKey),
                 alpacaSecret   = encryptor.decrypt(row.encryptedApiSecret),
-                fredKey        = row.fredApiKey,
                 paper          = row.paper,
                 startingEquity = row.startingEquity,
                 riskPct        = row.riskPct

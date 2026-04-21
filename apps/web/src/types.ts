@@ -143,7 +143,6 @@ export interface TraderStatus {
 export interface TraderSettings {
   alpacaApiKey: string
   alpacaApiSecret: string
-  fredApiKey: string
   paper: boolean
   startingEquity: number
   riskPct: number

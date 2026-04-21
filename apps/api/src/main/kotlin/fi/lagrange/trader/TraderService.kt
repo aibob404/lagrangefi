@@ -6,7 +6,6 @@ import fi.lagrange.trader.backtest.BacktestReport
 import fi.lagrange.trader.backtest.ReportGenerator
 import fi.lagrange.trader.data.AlpacaHistoricalClient
 import fi.lagrange.trader.data.AlpacaStreamClient
-import fi.lagrange.trader.data.FredClient
 import fi.lagrange.trader.data.MacroDataService
 import fi.lagrange.trader.data.StooqClient
 import fi.lagrange.trader.data.model.Bar
@@ -38,6 +37,7 @@ import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 import kotlinx.serialization.json.Json
 
+@kotlinx.serialization.Serializable
 data class TraderStatus(
     val running: Boolean,
     val accountEquity: Double,
@@ -55,7 +55,6 @@ data class TraderStatus(
 class TraderService(
     alpacaKey: String,
     alpacaSecret: String,
-    fredKey: String,
     private val paper: Boolean = true,
     private val startingEquity: Double = 100_000.0,
     private val riskPct: Double = 0.005
@@ -70,9 +69,8 @@ class TraderService(
     private val alpacaHistorical = AlpacaHistoricalClient(httpClient, alpacaKey, alpacaSecret)
     private val alpacaStream     = AlpacaStreamClient(httpClient, alpacaKey, alpacaSecret)
     private val alpacaOrders     = AlpacaOrderClient(httpClient, alpacaKey, alpacaSecret, paper)
-    private val fredClient       = FredClient(httpClient, fredKey)
     private val stooqClient      = StooqClient(httpClient)
-    private val macroDataService = MacroDataService(fredClient, stooqClient, alpacaHistorical)
+    private val macroDataService = MacroDataService(stooqClient, alpacaHistorical)
     private val orchestrator     = SignalOrchestrator()
     private val tradeManager     = TradeManager(alpacaOrders)
     private val volEngine        = VolatilityRegimeEngine()

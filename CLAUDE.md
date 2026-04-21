@@ -115,6 +115,26 @@ Test environment is at http://$SERVER_IP/. There is no automatic deploy on PR pu
 - Private keys and DB credentials are k8s Secrets, never ConfigMaps
 - RPC URLs go in ConfigMaps
 
+### Common commands
+
+```bash
+# Logs (test)
+kubectl logs -n test deployment/api -f
+kubectl logs -n test deployment/web -f
+kubectl logs -n test deployment/chain -f
+
+# Logs (prod)
+kubectl logs -n prod deployment/api -f
+kubectl logs -n prod deployment/web -f
+
+# Pod status
+kubectl get pods -n test
+kubectl get pods -n prod
+
+# Restart a deployment
+kubectl rollout restart -n test deployment/api
+```
+
 ### Secrets required
 
 | Secret | Namespace | Keys |

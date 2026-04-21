@@ -1,7 +1,9 @@
 package fi.lagrange.trader.data.model
 
 import kotlinx.datetime.Instant
+import kotlinx.serialization.Serializable
 
+@Serializable
 data class Bar(
     val timestamp: Instant,
     val open: Double,
@@ -14,6 +16,7 @@ data class Bar(
     val typical: Double get() = (high + low + close) / 3.0
 }
 
+@Serializable
 data class DailyBar(
     val date: kotlinx.datetime.LocalDate,
     val open: Double,
@@ -23,6 +26,7 @@ data class DailyBar(
     val volume: Long = 0
 )
 
+@Serializable
 data class MacroSnapshot(
     val date: kotlinx.datetime.LocalDate,
     val fedFundsRate: Double,  // sourced from ^irx (13W T-bill — tracks FFR closely)

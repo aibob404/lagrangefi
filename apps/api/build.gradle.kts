@@ -90,3 +90,11 @@ tasks.withType<JavaCompile> {
 tasks.test {
     useJUnitPlatform()
 }
+
+tasks.register<JavaExec>("backtestSweep") {
+    group = "backtest"
+    description = "Run parameter sweep locally — set ALPACA_KEY, ALPACA_SECRET, START_DATE, END_DATE"
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("fi.lagrange.trader.backtest.BacktestSweepKt")
+    environment(System.getenv())
+}

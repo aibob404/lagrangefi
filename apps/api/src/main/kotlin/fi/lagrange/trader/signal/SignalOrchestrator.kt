@@ -38,6 +38,7 @@ data class OrchestratorInput(
 )
 
 class SignalOrchestrator(
+    val config: SignalConfig                     = SignalConfig(),
     private val macroEngine: MacroRegimeEngine   = MacroRegimeEngine(),
     private val volEngine: VolatilityRegimeEngine = VolatilityRegimeEngine(),
     private val eventFilter: EventFilter          = EventFilter(),
@@ -63,8 +64,8 @@ class SignalOrchestrator(
         val macro = input.precomputedMacro
             ?: macroEngine.compute(input.spyDailyBars, input.macroHistory)
             ?: return noTrade("Gate 2: insufficient macro history (need 200+ daily bars)")
-        if (macro.mBase < 1)
-            return noTrade("Gate 2: macro score ${macro.mBase} < 1 (regime=${macro.regime})")
+        if (macro.mBase < config.macroGate)
+            return noTrade("Gate 2: macro score ${macro.mBase} < ${config.macroGate} (regime=${macro.regime})")
 
         // --- Gate 3: volatility regime ---
         val vol = volEngine.compute(input.macroHistory.last())
@@ -95,7 +96,7 @@ class SignalOrchestrator(
 
         val bBar = orb.breakoutBar!!
 
-        if (orb.rvol < 1.5)                        return noTrade("Gate 7: RVOL ${String.format("%.2f", orb.rvol)} < 1.5")
+        if (orb.rvol < config.rvolMin)              return noTrade("Gate 7: RVOL ${String.format("%.2f", orb.rvol)} < ${config.rvolMin}")
         if (!orb.priceAboveVwap)                   return noTrade("Gate 8: price ${bBar.close} below VWAP ${String.format("%.2f", orb.vwap)}")
         if (!orb.notOverextended)                  return noTrade("Gate 9: entry overextended above OR_high")
         if (!orb.emaStackBull)                     return noTrade("Gate 10: EMA stack not bullish (9>21>200)")
@@ -116,7 +117,7 @@ class SignalOrchestrator(
         val atr5    = Indicators.atr(iHighs, iLows, iCloses, 14)
             .lastOrNull { !it.isNaN() } ?: (dailyAtr / 5.0)
 
-        val stopDist   = 0.5 * atr5
+        val stopDist   = config.stopAtrMult * atr5
         val entryPrice = bBar.close
         val stopPrice  = entryPrice - stopDist
         val tp1Price   = entryPrice + stopDist         // 1R — take 1/3, move stop to BE

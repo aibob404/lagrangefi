@@ -9,6 +9,7 @@ import fi.lagrange.trader.signal.MacroRegimeEngine
 import fi.lagrange.trader.signal.OrchestratorInput
 import fi.lagrange.trader.signal.SignalOrchestrator
 import fi.lagrange.trader.signal.TradeDirection
+import fi.lagrange.trader.signal.TradeSignal
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.LocalTime
 import kotlinx.datetime.TimeZone
@@ -48,7 +49,8 @@ class BacktestEngine(
         intradayBars: List<Bar>,
         macroHistory: List<MacroSnapshot>,
         config: BacktestConfig,
-        onProgress: (String) -> Unit = {}
+        onProgress: (String) -> Unit = {},
+        onEval: ((TradeSignal) -> Unit)? = null
     ): BacktestResult {
         val portfolio    = Portfolio(config.startingEquity)
         val equityCurve  = mutableListOf<Pair<LocalDate, Double>>()
@@ -145,6 +147,7 @@ class BacktestEngine(
                     precomputedMacro = macroRegimeResult
                 )
                 val signal = orchestrator.evaluate(input)
+                onEval?.invoke(signal)
                 if (signal.direction == TradeDirection.LONG) {
                     portfolio.onSignal(signal, bar.timestamp)
                 }

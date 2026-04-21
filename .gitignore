@@ -27,3 +27,4 @@ k8s/**/*-secret.yaml
 
 # MCP config (contains API tokens)
 .mcp.json
+.backtestcache/

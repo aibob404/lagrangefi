@@ -18,7 +18,7 @@ images:
     newTag: sha-4fe5a6a
   - name: lagrangefi/web
     newName: ghcr.io/aibob404/lagrangefi-web
-    newTag: sha-3b7268e
+    newTag: sha-e2d1199
 # ─── Secrets ──────────────────────────────────────────────────────────────────
 #
 # postgres-secret

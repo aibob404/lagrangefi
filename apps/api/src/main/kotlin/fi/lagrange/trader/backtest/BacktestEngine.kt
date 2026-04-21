@@ -5,6 +5,7 @@ import fi.lagrange.trader.data.model.CompletedTrade
 import fi.lagrange.trader.data.model.DailyBar
 import fi.lagrange.trader.data.model.MacroSnapshot
 import fi.lagrange.trader.signal.Indicators
+import fi.lagrange.trader.signal.MacroRegimeEngine
 import fi.lagrange.trader.signal.OrchestratorInput
 import fi.lagrange.trader.signal.SignalOrchestrator
 import fi.lagrange.trader.signal.TradeDirection
@@ -38,14 +39,16 @@ data class BacktestResult(
  *  - [macroHistory]  — daily MacroSnapshots (FRED + VIX data)
  */
 class BacktestEngine(
-    private val orchestrator: SignalOrchestrator = SignalOrchestrator()
+    private val orchestrator: SignalOrchestrator = SignalOrchestrator(),
+    private val macroEngine: MacroRegimeEngine = MacroRegimeEngine()
 ) {
 
     fun run(
         dailyBars: List<DailyBar>,
         intradayBars: List<Bar>,
         macroHistory: List<MacroSnapshot>,
-        config: BacktestConfig
+        config: BacktestConfig,
+        onProgress: (String) -> Unit = {}
     ): BacktestResult {
         val portfolio    = Portfolio(config.startingEquity)
         val equityCurve  = mutableListOf<Pair<LocalDate, Double>>()
@@ -61,11 +64,17 @@ class BacktestEngine(
             .mapValues { (_, bars) -> bars.sortedBy { it.timestamp } }
 
         val tradingDates = barsByDate.keys.sorted()
+        val totalDays    = tradingDates.size
+        val reportEvery  = maxOf(1, totalDays / 20)  // ~5% increments
 
         var lastWeekOfYear = -1
         var lastMonth      = -1
 
-        for (date in tradingDates) {
+        for ((dayIdx, date) in tradingDates.withIndex()) {
+            if (dayIdx % reportEvery == 0) {
+                val pct = if (totalDays > 0) dayIdx * 100 / totalDays else 0
+                onProgress("Engine: $dayIdx/$totalDays days ($pct%) — ${portfolio.completedTrades.size} trades so far")
+            }
             val dayBars = barsByDate[date] ?: continue
 
             // Reset daily circuit-breaker window
@@ -81,6 +90,9 @@ class BacktestEngine(
             val dailyWindow = dailyBars.filter { it.date < date }
             val macroWindow = macroHistory.filter { it.date <= date }
             if (dailyWindow.size < 200 || macroWindow.isEmpty()) continue
+
+            // Precompute macro regime once per day — avoids O(n²) SMA/ADX per intraday bar
+            val macroRegimeResult = macroEngine.compute(dailyWindow, macroWindow) ?: continue
 
             // Precompute daily ATR (used for both ORB range check and stop sizing)
             val dHighs  = dailyWindow.map { it.high }.toDoubleArray()
@@ -120,16 +132,17 @@ class BacktestEngine(
 
                 // 3. Evaluate entry signal
                 val input = OrchestratorInput(
-                    spyDailyBars   = dailyWindow,
-                    spy5minBars    = sessionBarsAccum,
-                    macroHistory   = macroWindow,
-                    date           = date,
-                    timeEt         = timeEt,
-                    accountEquity  = portfolio.equity,
-                    riskPct        = config.riskPct,
-                    dailyPnl       = portfolio.dailyPnl,
-                    weeklyPnl      = portfolio.weeklyPnl,
-                    hasOpenPosition = portfolio.hasOpenPosition
+                    spyDailyBars    = dailyWindow,
+                    spy5minBars     = sessionBarsAccum,
+                    macroHistory    = macroWindow,
+                    date            = date,
+                    timeEt          = timeEt,
+                    accountEquity   = portfolio.equity,
+                    riskPct         = config.riskPct,
+                    dailyPnl        = portfolio.dailyPnl,
+                    weeklyPnl       = portfolio.weeklyPnl,
+                    hasOpenPosition = portfolio.hasOpenPosition,
+                    precomputedMacro = macroRegimeResult
                 )
                 val signal = orchestrator.evaluate(input)
                 if (signal.direction == TradeDirection.LONG) {

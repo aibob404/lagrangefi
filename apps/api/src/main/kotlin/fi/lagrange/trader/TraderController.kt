@@ -9,8 +9,13 @@ import io.ktor.server.application.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.datetime.LocalDate
 import kotlinx.serialization.Serializable
+import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
 @Serializable
@@ -34,6 +39,24 @@ data class SaveTraderSettingsRequest(
 data class BacktestRequest(
     val startDate: String,
     val endDate: String
+)
+
+class BacktestJobState {
+    @Volatile var status: String = "running"
+    @Volatile var progress: String = "Starting..."
+    @Volatile var result: BacktestReportDto? = null
+    @Volatile var error: String? = null
+}
+
+@Serializable
+data class BacktestJobStarted(val jobId: String)
+
+@Serializable
+data class BacktestJobResponse(
+    val status: String,
+    val progress: String,
+    val result: BacktestReportDto? = null,
+    val error: String? = null
 )
 
 @Serializable
@@ -66,9 +89,9 @@ fun Route.traderRoutes(
     settingsRepo: TraderSettingsRepository,
     encryptor: SecretEncryptor
 ) {
-    // In-memory registry of running trader instances, keyed by userId.
-    // Production: replace with a persistent scheduler/supervisor approach.
-    val instances = ConcurrentHashMap<Int, TraderService>()
+    val instances     = ConcurrentHashMap<Int, TraderService>()
+    val backtestJobs  = ConcurrentHashMap<String, BacktestJobState>()
+    val backtestScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     route("/trader/spy-orb") {
 
@@ -165,26 +188,55 @@ fun Route.traderRoutes(
                     call.respond(HttpStatusCode.BadRequest, mapOf("error" to "No trader settings saved"))
                     return@post
                 }
-            val svc = TraderService(
-                alpacaKey      = encryptor.decrypt(row.encryptedApiKey),
-                alpacaSecret   = encryptor.decrypt(row.encryptedApiSecret),
-                paper          = row.paper,
-                startingEquity = row.startingEquity,
-                riskPct        = row.riskPct
-            )
-            val report = svc.runBacktest(startDate, endDate)
-            call.respond(BacktestReportDto(
-                totalTrades         = report.totalTrades,
-                winRate             = report.winRate,
-                profitFactor        = report.profitFactor,
-                sharpe              = report.sharpe,
-                sortino             = report.sortino,
-                maxDrawdownPct      = report.maxDrawdownPct,
-                netReturnPct        = report.netReturn,
-                annualisedReturnPct = report.annualisedReturn,
-                avgHoldMinutes      = report.avgHoldMinutes,
-                tradesPerWeek       = report.tradesPerWeek,
-                summary             = report.summary()
+
+            val jobId = UUID.randomUUID().toString()
+            val jobState = BacktestJobState()
+            backtestJobs[jobId] = jobState
+
+            backtestScope.launch {
+                try {
+                    val svc = TraderService(
+                        alpacaKey      = encryptor.decrypt(row.encryptedApiKey),
+                        alpacaSecret   = encryptor.decrypt(row.encryptedApiSecret),
+                        paper          = row.paper,
+                        startingEquity = row.startingEquity,
+                        riskPct        = row.riskPct
+                    )
+                    val report = svc.runBacktest(startDate, endDate) { msg -> jobState.progress = msg }
+                    jobState.result = BacktestReportDto(
+                        totalTrades         = report.totalTrades,
+                        winRate             = report.winRate,
+                        profitFactor        = report.profitFactor,
+                        sharpe              = report.sharpe,
+                        sortino             = report.sortino,
+                        maxDrawdownPct      = report.maxDrawdownPct,
+                        netReturnPct        = report.netReturn,
+                        annualisedReturnPct = report.annualisedReturn,
+                        avgHoldMinutes      = report.avgHoldMinutes,
+                        tradesPerWeek       = report.tradesPerWeek,
+                        summary             = report.summary()
+                    )
+                    jobState.status = "done"
+                    jobState.progress = "Done"
+                } catch (e: Exception) {
+                    jobState.status = "error"
+                    jobState.error = e.message ?: "Unknown error"
+                }
+            }
+
+            call.respond(BacktestJobStarted(jobId = jobId))
+        }
+
+        get("/backtest/{jobId}") {
+            val jobId = call.parameters["jobId"]
+                ?: run { call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing jobId")); return@get }
+            val job = backtestJobs[jobId]
+                ?: run { call.respond(HttpStatusCode.NotFound, mapOf("error" to "Job not found")); return@get }
+            call.respond(BacktestJobResponse(
+                status   = job.status,
+                progress = job.progress,
+                result   = job.result,
+                error    = job.error
             ))
         }
     }

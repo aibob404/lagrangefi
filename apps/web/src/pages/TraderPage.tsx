@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
-  fetchTraderStatus, fetchTraderSettingsInfo, saveTraderSettings, startTrader, stopTrader, runBacktest,
+  fetchTraderStatus, fetchTraderSettingsInfo, saveTraderSettings, startTrader, stopTrader,
+  startBacktest, pollBacktest,
 } from '../api'
 import type { TraderStatus, BacktestReport } from '../types'
 
@@ -305,17 +306,43 @@ function BacktestTab() {
   const [startDate, setStartDate] = useState('2021-01-01')
   const [endDate, setEndDate]     = useState('2024-12-31')
   const [running, setRunning]     = useState(false)
+  const [jobId, setJobId]         = useState<string | null>(null)
+  const [progress, setProgress]   = useState('')
   const [report, setReport]       = useState<BacktestReport | null>(null)
   const [error, setError]         = useState('')
 
+  useEffect(() => {
+    if (!jobId) return
+    let cancelled = false
+    const id = setInterval(async () => {
+      if (cancelled) return
+      try {
+        const s = await pollBacktest(jobId)
+        if (cancelled) return
+        setProgress(s.progress)
+        if (s.status === 'done') {
+          setReport(s.result!)
+          setRunning(false)
+          setJobId(null)
+        } else if (s.status === 'error') {
+          setError(s.error ?? 'Backtest failed')
+          setRunning(false)
+          setJobId(null)
+        }
+      } catch (e: any) {
+        if (!cancelled) { setError(e.message); setRunning(false); setJobId(null) }
+      }
+    }, 2000)
+    return () => { cancelled = true; clearInterval(id) }
+  }, [jobId])
+
   async function handleRun() {
-    setRunning(true); setError(''); setReport(null)
+    setRunning(true); setError(''); setReport(null); setProgress('Starting...')
     try {
-      const r = await runBacktest(startDate, endDate)
-      setReport(r)
+      const { jobId: id } = await startBacktest(startDate, endDate)
+      setJobId(id)
     } catch (e: any) {
       setError(e.message)
-    } finally {
       setRunning(false)
     }
   }
@@ -342,10 +369,14 @@ function BacktestTab() {
         </p>
       </Card>
 
-      <Btn onClick={handleRun} loading={running}>
+      <Btn onClick={handleRun} loading={running} disabled={running}>
         <IconChart width={14} height={14} />
-        {running ? 'Running backtest…' : 'Run backtest'}
+        {running ? 'Running…' : 'Run backtest'}
       </Btn>
+
+      {running && progress && (
+        <p className="text-[12.5px] text-gray-500 font-mono bg-gray-50 rounded-xl px-4 py-2">{progress}</p>
+      )}
 
       {error && <p className="text-[13px] text-red-600 bg-red-50 rounded-xl px-4 py-2">{error}</p>}
 

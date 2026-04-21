@@ -26,6 +26,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
@@ -120,20 +122,37 @@ class TraderService(
         )
     }
 
-    suspend fun runBacktest(startDate: LocalDate, endDate: LocalDate): BacktestReport {
+    suspend fun runBacktest(
+        startDate: LocalDate,
+        endDate: LocalDate,
+        onProgress: (String) -> Unit = {}
+    ): BacktestReport = coroutineScope {
         val start = startDate.toString()
         val end   = endDate.toString()
         log.info("Backtest starting: $start → $end")
-        val intradayBars = alpacaHistorical.fetchBars("SPY", "5Min", start, end)
-        log.info("Backtest: fetched ${intradayBars.size} intraday bars")
-        val daily = alpacaHistorical.fetchDailyBars("SPY", "2010-01-01", end)
-        log.info("Backtest: fetched ${daily.size} daily bars")
-        val macro = macroDataService.buildHistory("2010-01-01", end)
-        log.info("Backtest: built ${macro.size} macro snapshots")
+
+        onProgress("Fetching market data in parallel...")
+        val intradayD = async { alpacaHistorical.fetchBars("SPY", "5Min", start, end) }
+        val dailyD    = async { alpacaHistorical.fetchDailyBars("SPY", "2010-01-01", end) }
+        val macroD    = async { macroDataService.buildHistory("2010-01-01", end) }
+
+        val intradayBars = intradayD.await().also {
+            log.info("Backtest: fetched ${it.size} intraday bars")
+            onProgress("Fetched ${it.size} SPY 5-min bars")
+        }
+        val daily = dailyD.await().also {
+            log.info("Backtest: fetched ${it.size} daily bars")
+            onProgress("Fetched ${it.size} daily bars")
+        }
+        val macro = macroD.await().also {
+            log.info("Backtest: built ${it.size} macro snapshots")
+            onProgress("Built ${it.size} macro snapshots — starting engine...")
+        }
+
         val config = BacktestConfig(startDate, endDate, startingEquity, riskPct)
-        val result = BacktestEngine(orchestrator).run(daily, intradayBars, macro, config)
+        val result = BacktestEngine(orchestrator).run(daily, intradayBars, macro, config, onProgress)
         log.info("Backtest done: ${result.trades.size} trades, finalEquity=${result.finalEquity}")
-        return ReportGenerator.generate(result)
+        ReportGenerator.generate(result)
     }
 
     private suspend fun refreshDailyData() {

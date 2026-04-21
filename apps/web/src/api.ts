@@ -195,9 +195,20 @@ export async function stopTrader(): Promise<void> {
   await apiFetch('/api/v1/trader/spy-orb/stop', { method: 'POST' })
 }
 
-export async function runBacktest(startDate: string, endDate: string): Promise<BacktestReport> {
+export async function startBacktest(startDate: string, endDate: string): Promise<{ jobId: string }> {
   return apiFetch('/api/v1/trader/spy-orb/backtest', {
     method: 'POST',
     body: JSON.stringify({ startDate, endDate }),
   })
+}
+
+export interface BacktestJobStatus {
+  status: 'running' | 'done' | 'error'
+  progress: string
+  result?: BacktestReport
+  error?: string
+}
+
+export async function pollBacktest(jobId: string): Promise<BacktestJobStatus> {
+  return apiFetch(`/api/v1/trader/spy-orb/backtest/${jobId}`)
 }

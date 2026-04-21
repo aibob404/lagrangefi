@@ -2,6 +2,8 @@ package fi.lagrange.trader.data
 
 import fi.lagrange.trader.data.model.DailyBar
 import fi.lagrange.trader.data.model.MacroSnapshot
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 
 /**
  * Assembles daily [MacroSnapshot] rows — no API key required.
@@ -15,14 +17,22 @@ class MacroDataService(
     private val alpaca: AlpacaHistoricalClient
 ) {
 
-    suspend fun buildHistory(startDate: String = "2010-01-01", endDate: String): List<MacroSnapshot> {
-        val tnx   = yahoo.fetchDailyBars("^TNX", startDate).associateBy { it.date }  // 10Y yield %
-        val irx   = yahoo.fetchDailyBars("^IRX", startDate).associateBy { it.date }  // 13W T-bill %
-        val vix   = yahoo.fetchDailyBars("^VIX", startDate).associateBy { it.date }
-        val vix3m = yahoo.fetchDailyBars("^VXV", startDate).associateBy { it.date }
-        val vvix  = yahoo.fetchDailyBars("^VVIX", startDate).associateBy { it.date }
-        val hyg   = fetchEtf("HYG", startDate, endDate).associateBy { it.date }
-        val lqd   = fetchEtf("LQD", startDate, endDate).associateBy { it.date }
+    suspend fun buildHistory(startDate: String = "2010-01-01", endDate: String): List<MacroSnapshot> = coroutineScope {
+        val tnxD   = async { yahoo.fetchDailyBars("^TNX",  startDate).associateBy { it.date } }
+        val irxD   = async { yahoo.fetchDailyBars("^IRX",  startDate).associateBy { it.date } }
+        val vixD   = async { yahoo.fetchDailyBars("^VIX",  startDate).associateBy { it.date } }
+        val vix3mD = async { yahoo.fetchDailyBars("^VXV",  startDate).associateBy { it.date } }
+        val vvixD  = async { yahoo.fetchDailyBars("^VVIX", startDate).associateBy { it.date } }
+        val hygD   = async { fetchEtf("HYG", startDate, endDate).associateBy { it.date } }
+        val lqdD   = async { fetchEtf("LQD", startDate, endDate).associateBy { it.date } }
+
+        val tnx   = tnxD.await()
+        val irx   = irxD.await()
+        val vix   = vixD.await()
+        val vix3m = vix3mD.await()
+        val vvix  = vvixD.await()
+        val hyg   = hygD.await()
+        val lqd   = lqdD.await()
 
         val allDates = vix.keys.filter { it.toString() >= startDate && it.toString() <= endDate }.sorted()
 
@@ -30,7 +40,7 @@ class MacroDataService(
         var lastHyg = 0.0; var lastLqd = 0.0
         var lastVix3m = 0.0; var lastVvix = 0.0
 
-        return allDates.mapNotNull { date ->
+        allDates.mapNotNull { date ->
             tnx[date]?.let   { lastTnx   = it.close }
             irx[date]?.let   { lastIrx   = it.close }
             hyg[date]?.let   { lastHyg   = it.close }

@@ -29,11 +29,12 @@ data class OrchestratorInput(
     val date: LocalDate,
     val timeEt: LocalTime,
     val accountEquity: Double,
-    val riskPct: Double = 0.01,            // 1% account risk per trade
+    val riskPct: Double = 0.01,
     val dailyPnl: Double = 0.0,
     val weeklyPnl: Double = 0.0,
     val hasOpenPosition: Boolean = false,
-    val priorDayPoc: Double = 0.0          // prior-day point of control
+    val priorDayPoc: Double = 0.0,
+    val precomputedMacro: MacroRegimeResult? = null
 )
 
 class SignalOrchestrator(
@@ -59,7 +60,8 @@ class SignalOrchestrator(
             return noTrade("Gate 1: ${event.reason}")
 
         // --- Gate 2: macro regime (M_base ≥ 1 required) ---
-        val macro = macroEngine.compute(input.spyDailyBars, input.macroHistory)
+        val macro = input.precomputedMacro
+            ?: macroEngine.compute(input.spyDailyBars, input.macroHistory)
             ?: return noTrade("Gate 2: insufficient macro history (need 200+ daily bars)")
         if (macro.mBase < 1)
             return noTrade("Gate 2: macro score ${macro.mBase} < 1 (regime=${macro.regime})")

@@ -1,7 +1,7 @@
 package fi.lagrange.model
 
 import org.jetbrains.exposed.sql.Table
-import timestamp
+import org.jetbrains.exposed.sql.kotlin.datetime.timestamp
 
 object Users : Table("users") {
     val id = integer("id").autoIncrement()

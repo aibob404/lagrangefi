@@ -118,22 +118,29 @@ Test environment is at http://$SERVER_IP/. There is no automatic deploy on PR pu
 ### Common commands
 
 ```bash
-# Logs (test)
-kubectl logs -n test deployment/api -f
-kubectl logs -n test deployment/web -f
-kubectl logs -n test deployment/chain -f
-
-# Logs (prod)
-kubectl logs -n prod deployment/api -f
-kubectl logs -n prod deployment/web -f
-
 # Pod status
 kubectl get pods -n test
 kubectl get pods -n prod
 
+# Logs — direct kubectl (tail only, no history)
+kubectl logs -n test deployment/api -f
+kubectl logs -n test deployment/web -f
+kubectl logs -n test deployment/chain -f
+kubectl logs -n prod deployment/api -f
+
 # Restart a deployment
 kubectl rollout restart -n test deployment/api
 ```
+
+### Logging / Grafana
+
+Logs are collected by **Promtail → Loki → Grafana** in the `monitoring` namespace.
+
+- Grafana UI: https://grafana.ai-bob.pro — use Explore → Loki to query logs
+- To query test api logs in LogQL: `{namespace="test", app="api"}`
+- To query prod api logs: `{namespace="prod", app="api"}`
+
+Prefer Grafana over `kubectl logs` for historical logs and multi-pod searches.
 
 ### Secrets required
 

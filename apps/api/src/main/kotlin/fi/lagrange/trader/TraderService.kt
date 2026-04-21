@@ -2,7 +2,7 @@ package fi.lagrange.trader
 
 import fi.lagrange.trader.backtest.BacktestConfig
 import fi.lagrange.trader.backtest.BacktestEngine
-import fi.lagrange.trader.backtest.BacktestReport
+import fi.lagrange.trader.backtest.BacktestResult
 import fi.lagrange.trader.backtest.ReportGenerator
 import fi.lagrange.trader.data.AlpacaHistoricalClient
 import fi.lagrange.trader.data.AlpacaStreamClient
@@ -126,7 +126,7 @@ class TraderService(
         startDate: LocalDate,
         endDate: LocalDate,
         onProgress: (String) -> Unit = {}
-    ): BacktestReport = coroutineScope {
+    ): BacktestResult = coroutineScope {
         val start = startDate.toString()
         val end   = endDate.toString()
         log.info("Backtest starting: $start → $end")
@@ -152,7 +152,7 @@ class TraderService(
         val config = BacktestConfig(startDate, endDate, startingEquity, riskPct)
         val result = BacktestEngine(orchestrator).run(daily, intradayBars, macro, config, onProgress)
         log.info("Backtest done: ${result.trades.size} trades, finalEquity=${result.finalEquity}")
-        ReportGenerator.generate(result)
+        result
     }
 
     private suspend fun refreshDailyData() {

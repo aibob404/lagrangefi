@@ -1,6 +1,10 @@
 package fi.lagrange.trader
 
 import fi.lagrange.auth.getUserId
+import fi.lagrange.model.BacktestRuns
+import fi.lagrange.model.BacktestTrades
+import fi.lagrange.trader.backtest.ReportGenerator
+import fi.lagrange.trader.db.BacktestRepository
 import fi.lagrange.trader.db.SecretEncryptor
 import fi.lagrange.trader.db.TraderSettingsRepository
 import fi.lagrange.trader.db.TraderSettingsRow
@@ -74,6 +78,40 @@ data class BacktestReportDto(
     val summary: String
 )
 
+@Serializable
+data class BacktestRunSummaryDto(
+    val id: Int,
+    val startDate: String,
+    val endDate: String,
+    val ranAt: String,
+    val startingEquity: Double,
+    val totalTrades: Int,
+    val winRate: Double,
+    val profitFactor: Double,
+    val sharpe: Double,
+    val maxDrawdownPct: Double,
+    val netReturnPct: Double,
+    val annualisedReturnPct: Double
+)
+
+@Serializable
+data class BacktestTradeDto(
+    val id: Int,
+    val entryAt: String,
+    val exitAt: String?,
+    val entryPrice: Double,
+    val exitPrice: Double?,
+    val shares: Int,
+    val pnl: Double,
+    val pnlPct: Double,
+    val holdMinutes: Long,
+    val rMultiple: Double,
+    val qualityScore: Int,
+    val macroScore: Int,
+    val exitReason: String?,
+    val entryReason: String
+)
+
 /**
  * Trader REST routes, mounted under /api/v1/trader.
  * Each user has their own Alpaca keys stored encrypted in the DB.
@@ -89,9 +127,10 @@ fun Route.traderRoutes(
     settingsRepo: TraderSettingsRepository,
     encryptor: SecretEncryptor
 ) {
-    val instances     = ConcurrentHashMap<Int, TraderService>()
-    val backtestJobs  = ConcurrentHashMap<String, BacktestJobState>()
-    val backtestScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    val instances      = ConcurrentHashMap<Int, TraderService>()
+    val backtestJobs   = ConcurrentHashMap<String, BacktestJobState>()
+    val backtestScope  = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    val backtestRepo   = BacktestRepository()
 
     route("/trader/spy-orb") {
 
@@ -202,7 +241,13 @@ fun Route.traderRoutes(
                         startingEquity = row.startingEquity,
                         riskPct        = row.riskPct
                     )
-                    val report = svc.runBacktest(startDate, endDate) { msg -> jobState.progress = msg }
+                    val result = svc.runBacktest(startDate, endDate) { msg -> jobState.progress = msg }
+                    val report = ReportGenerator.generate(result)
+
+                    jobState.progress = "Saving results to database..."
+                    val runId = backtestRepo.saveRun(userId, body.startDate, body.endDate, row.startingEquity, row.riskPct, report)
+                    backtestRepo.saveTrades(runId, userId, result.trades)
+
                     jobState.result = BacktestReportDto(
                         totalTrades         = report.totalTrades,
                         winRate             = report.winRate,
@@ -225,6 +270,52 @@ fun Route.traderRoutes(
             }
 
             call.respond(BacktestJobStarted(jobId = jobId))
+        }
+
+        get("/backtest/runs") {
+            val userId = call.getUserId()
+            val rows = backtestRepo.listRuns(userId)
+            call.respond(rows.map { row ->
+                BacktestRunSummaryDto(
+                    id                  = row[BacktestRuns.id],
+                    startDate           = row[BacktestRuns.startDate],
+                    endDate             = row[BacktestRuns.endDate],
+                    ranAt               = row[BacktestRuns.ranAt].toString(),
+                    startingEquity      = row[BacktestRuns.startingEquity],
+                    totalTrades         = row[BacktestRuns.totalTrades],
+                    winRate             = row[BacktestRuns.winRate],
+                    profitFactor        = row[BacktestRuns.profitFactor],
+                    sharpe              = row[BacktestRuns.sharpe],
+                    maxDrawdownPct      = row[BacktestRuns.maxDrawdownPct],
+                    netReturnPct        = row[BacktestRuns.netReturnPct],
+                    annualisedReturnPct = row[BacktestRuns.annualisedReturnPct]
+                )
+            })
+        }
+
+        get("/backtest/runs/{runId}/trades") {
+            val userId = call.getUserId()
+            val runId  = call.parameters["runId"]?.toIntOrNull()
+                ?: run { call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid runId")); return@get }
+            val rows = backtestRepo.getTrades(runId, userId)
+            call.respond(rows.map { row ->
+                BacktestTradeDto(
+                    id           = row[BacktestTrades.id],
+                    entryAt      = row[BacktestTrades.entryAt].toString(),
+                    exitAt       = row[BacktestTrades.exitAt]?.toString(),
+                    entryPrice   = row[BacktestTrades.entryPrice],
+                    exitPrice    = row[BacktestTrades.exitPrice],
+                    shares       = row[BacktestTrades.shares],
+                    pnl          = row[BacktestTrades.pnl],
+                    pnlPct       = row[BacktestTrades.pnlPct],
+                    holdMinutes  = row[BacktestTrades.holdMinutes],
+                    rMultiple    = row[BacktestTrades.rMultiple],
+                    qualityScore = row[BacktestTrades.qualityScore],
+                    macroScore   = row[BacktestTrades.macroScore],
+                    exitReason   = row[BacktestTrades.exitReason],
+                    entryReason  = row[BacktestTrades.entryReason]
+                )
+            })
         }
 
         get("/backtest/{jobId}") {

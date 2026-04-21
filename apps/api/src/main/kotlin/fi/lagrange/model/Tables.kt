@@ -150,6 +150,57 @@ object StrategySnapshots : Table("strategy_snapshots") {
     override val primaryKey = PrimaryKey(id)
 }
 
+/** One row per backtest run — summary stats + config. */
+object BacktestRuns : Table("backtest_runs") {
+    val id                  = integer("id").autoIncrement()
+    val userId              = integer("user_id").references(Users.id).index()
+    val startDate           = varchar("start_date", 10)
+    val endDate             = varchar("end_date", 10)
+    val ranAt               = org.jetbrains.exposed.sql.kotlin.datetime.timestamp("ran_at")
+    val startingEquity      = double("starting_equity")
+    val riskPct             = double("risk_pct")
+    val totalTrades         = integer("total_trades")
+    val winningTrades       = integer("winning_trades")
+    val losingTrades        = integer("losing_trades")
+    val winRate             = double("win_rate")
+    val avgWinR             = double("avg_win_r")
+    val avgLossR            = double("avg_loss_r")
+    val profitFactor        = double("profit_factor")
+    val expectancy          = double("expectancy")
+    val netReturnPct        = double("net_return_pct")
+    val annualisedReturnPct = double("annualised_return_pct")
+    val sharpe              = double("sharpe")
+    val sortino             = double("sortino")
+    val maxDrawdownPct      = double("max_drawdown_pct")
+    val avgHoldMinutes      = double("avg_hold_minutes")
+    val tradesPerWeek       = double("trades_per_week")
+    val equityCurveJson     = text("equity_curve_json")
+    override val primaryKey = PrimaryKey(id)
+}
+
+/** One row per trade within a backtest run — for drill-down analysis. */
+object BacktestTrades : Table("backtest_trades") {
+    val id            = integer("id").autoIncrement()
+    val backtestRunId = integer("backtest_run_id").references(BacktestRuns.id).index()
+    val userId        = integer("user_id").references(Users.id).index()
+    val entryAt       = org.jetbrains.exposed.sql.kotlin.datetime.timestamp("entry_at")
+    val exitAt        = org.jetbrains.exposed.sql.kotlin.datetime.timestamp("exit_at").nullable()
+    val entryPrice    = double("entry_price")
+    val exitPrice     = double("exit_price").nullable()
+    val shares        = integer("shares")
+    val pnl           = double("pnl")
+    val pnlPct        = double("pnl_pct")
+    val holdMinutes   = long("hold_minutes")
+    val rMultiple     = double("r_multiple")
+    val riskAmount    = double("risk_amount")
+    val stopPrice     = double("stop_price")
+    val qualityScore  = integer("quality_score")
+    val macroScore    = integer("macro_score")
+    val exitReason    = varchar("exit_reason", 32).nullable()
+    val entryReason   = text("entry_reason")
+    override val primaryKey = PrimaryKey(id)
+}
+
 /** Per-user Alpaca credentials for the SPY trader. Keys are AES-256-GCM encrypted at rest. */
 object TraderSettings : Table("trader_settings") {
     val userId            = integer("user_id").references(Users.id).uniqueIndex()

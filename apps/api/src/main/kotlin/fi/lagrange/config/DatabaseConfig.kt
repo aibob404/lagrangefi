@@ -8,6 +8,8 @@ import fi.lagrange.model.Strategies
 import fi.lagrange.model.StrategyEvents
 import fi.lagrange.model.StrategySnapshots
 import fi.lagrange.model.StrategyStats
+import fi.lagrange.model.BacktestRuns
+import fi.lagrange.model.BacktestTrades
 import fi.lagrange.model.TraderSettings
 import fi.lagrange.model.TraderTrades
 import fi.lagrange.model.Users
@@ -40,6 +42,8 @@ object DatabaseConfig {
                 StrategySnapshots,
                 TraderSettings,
                 TraderTrades,
+                BacktestRuns,
+                BacktestTrades,
             )
 
             // Index: strategies.user_id — SchemaUtils won't add indexes to existing tables

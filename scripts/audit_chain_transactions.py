@@ -12,7 +12,7 @@ Usage:
     python3 scripts/audit_chain_transactions.py [--strategy-id <id>]
 
 Requirements:
-    - SSH access to root@187.124.224.48
+    - SSH access to the k3s server (set SSH_HOST env var)
     - kubectl access to the test k3s cluster on that host
     - curl available on the remote host
 
@@ -29,7 +29,7 @@ import os
 import argparse
 import urllib.request
 
-SSH_HOST    = "root@187.124.224.48"
+SSH_HOST    = os.environ.get("SSH_HOST", "root@<server>")
 K8S_NS      = "test"
 POSTGRES_POD = "postgres-0"
 ARBITRUM_RPC = "https://arb1.arbitrum.io/rpc"
